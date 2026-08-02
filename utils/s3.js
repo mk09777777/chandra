@@ -65,5 +65,4 @@ async function generatePresignedUrl(key, disposition = 'inline') {
   const url = await getSignedUrl(s3, command, { expiresIn: 3600 });
   return url;
 }
-
 module.exports = { uploadToS3, generatePresignedUrl, sanitizeS3Key, assertValidS3Key };

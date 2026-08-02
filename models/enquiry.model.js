@@ -1,24 +1,6 @@
 const mongoose = require('mongoose');
-
-  const StoneSchema = new mongoose.Schema({
-    Type: String,
-    Color: String,
-    Shape: String,
-    MmSize: String,
-    SieveSize: String,
-    Weight: Number,
-    Pcs: Number,
-    CtWeight: Number,
-    Price: Number,
-    Markup: Number,
-  }, { _id: false });
-
-  const MetalSchema = new mongoose.Schema({
-    Weight: Number,
-    Color: String,
-    Quality: String,
-    Rate: Number
-  }, { _id: false });
+const StoneSchema = require('./common/stone.schema');
+const MetalSchema = require('./common/metal.schema');
 
   const ChecklistSchema = new mongoose.Schema({
     Engraving: { type: String, default: 'NA' },

@@ -27,19 +27,22 @@ async function resolvePricingContext(pricingDetails, clientId, isOnlyMetalDesign
     const metalWeight = parseFloat(pricingDetails.Metal.Weight) || 0;
     const metalQuality = pricingDetails.Metal.Quality;
     const metalRateOverride = pricingDetails.Metal.Rate;
+    const MetalOunceOverride = pricingDetails.Metal.GoldRatePerOunce;
     const quantity = pricingDetails.Quantity || 1;
+    console.log(`[pricing] metalWeight: ${metalWeight}, metalQuality: ${metalQuality}, metalRateOverride: ${metalRateOverride}, MetalOunceOverride: ${MetalOunceOverride}, quantity: ${quantity}`);
     
 
+    const gramRateFromOunce = MetalOunceOverride ? MetalOunceOverride / 31.1035 : null;
     let metalRate, metalFullRate;
 
     if (metalQuality === "Silver 925") {
-        metalRate = metalRateOverride ?? todaysMetalRates.silver?.price ?? 0;
+        metalRate = gramRateFromOunce ?? metalRateOverride ?? todaysMetalRates.silver?.price ?? 0;
         metalFullRate = metalRate;
     } else if (metalQuality === "Platinum") {
-        metalRate = metalRateOverride ?? todaysMetalRates.platinum?.price ?? 0;
+        metalRate = gramRateFromOunce ?? metalRateOverride ?? todaysMetalRates.platinum?.price ?? 0;
         metalFullRate = metalRate;
     } else {
-        const goldRate = metalRateOverride ?? todaysMetalRates.gold?.price ?? 0;
+        const goldRate = gramRateFromOunce ?? metalRateOverride ?? todaysMetalRates.gold?.price ?? 0;
         metalFullRate = goldRate;
 
         const match = metalQuality?.toUpperCase().match(/^(\d{1,2})K$/);

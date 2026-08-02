@@ -13,6 +13,7 @@ const notificationsRoutes = require('./notifications.routes');
 const imageValidationRoutes = require('./imageValidation.routes');
 const imagePricingRoutes = require('./imagePricing.routes');
 const jewelryEstimateRoutes = require('./jewelryEstimate.routes');
+const designsRoutes = require('./designs.routes');
 
 router.use('/enquiries', enquiryRoutes);
 router.use('/clients', clientRoutes);
@@ -26,5 +27,6 @@ router.use('/notifications', notificationsRoutes);
 router.use('/validate-image', imageValidationRoutes);
 router.use('/image-pricing', imagePricingRoutes);
 router.use('/jewelry-estimate', jewelryEstimateRoutes);
+router.use('/designs', designsRoutes);
 
 module.exports = router;
