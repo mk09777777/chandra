@@ -28,3 +28,7 @@ Thumbs.db
 *.swo
 *~
 
+
+# OCR model data
+eng.traineddata
+*.traineddata
