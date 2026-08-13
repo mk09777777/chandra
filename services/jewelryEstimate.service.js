@@ -88,7 +88,7 @@ const responseSchema = {
 };
 
 const model = genAI.getGenerativeModel({
-    model: process.env.ESTIMATOR_MODEL || 'gemini-2.5-pro',
+    model: process.env.ESTIMATOR_MODEL || 'gemini-3.6-flash',
     systemInstruction: SYSTEM_PROMPT,
 });
 

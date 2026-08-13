@@ -96,6 +96,41 @@ exports.updatePriority = async (id, priority) => {
   );
 };
 
+exports.getMaxOrderKey = async () => {
+  const enquiry = await Enquiry.findOne({}, { OrderKey: 1 })
+    .sort({ OrderKey: -1 })
+    .lean();
+  return enquiry?.OrderKey ?? null;
+};
+
+exports.getOrderKeysBefore = async (orderKey, excludeId, limit) => {
+  return await Enquiry.find(
+    { OrderKey: { $lte: orderKey }, _id: { $ne: excludeId } },
+    { OrderKey: 1 }
+  )
+    .sort({ OrderKey: -1 })
+    .limit(limit)
+    .lean();
+};
+
+exports.getOrderKeysAfter = async (orderKey, excludeId, limit) => {
+  return await Enquiry.find(
+    { OrderKey: { $gte: orderKey }, _id: { $ne: excludeId } },
+    { OrderKey: 1 }
+  )
+    .sort({ OrderKey: 1 })
+    .limit(limit)
+    .lean();
+};
+
+exports.setOrderKey = async (id, expectedOrderKey, orderKey) => {
+  const result = await Enquiry.updateOne(
+    { _id: id, OrderKey: expectedOrderKey },
+    { $set: { OrderKey: orderKey } }
+  );
+  return result.matchedCount > 0;
+};
+
 exports.updateEscalation = async (id, escalation) => {
   return await Enquiry.findByIdAndUpdate(
     id,
@@ -268,6 +303,10 @@ exports.search = async (searchTerm, filters, sort, pagination) => {
       // 3. Add the new number-based sort key
       pipelineSort.PriorityOrder = sortDirection;
     }
+    if (pipelineSort.orderKey !== undefined) {
+      pipelineSort.OrderKey = pipelineSort.orderKey;
+      delete pipelineSort.orderKey;
+    }
       
     // --- 3. Define the Aggregation Pipeline ---
     const pipeline = [
@@ -370,6 +409,7 @@ exports.search = async (searchTerm, filters, sort, pagination) => {
                             Name: 1,
                             StyleNumber: 1,
                             Category: 1,
+                            OrderKey: 1,
                             CurrentStatus: 1,
                             CurrentSubStatus: 1,
                             ClientId: 1,

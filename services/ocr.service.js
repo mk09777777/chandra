@@ -34,7 +34,7 @@ const extractionSchema = {
     required: ["Stones", "Metal", "TotalPieces"]
 };
 
-const model = genAI.getGenerativeModel({ model: 'gemini-2.5-pro' });
+const model = genAI.getGenerativeModel({ model: 'gemini-3.6-flash' });
 
 async function preprocessImage(buffer) {
     return await sharp(buffer)

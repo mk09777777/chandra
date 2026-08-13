@@ -52,6 +52,12 @@ router.post(
     controller.massActionEnquiries
 );
 
+router.post(
+    '/reSort',
+    authenticateToken,
+    controller.reSortEnquiries
+);
+
 
 //Update asset details, marking as approved, 
 router.put('/:id/upload/:type',

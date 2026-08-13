@@ -16,6 +16,14 @@ const { normalizeShape } = require('../utils/shapes');
 const { deriveSubStatus, isValidPair, appendStatusEntry } = require('../utils/enquiryStatus');
 const { insertDesign } = require('./designs.service');
 
+const ORDER_KEY_GAP = 1000;
+const MIN_ORDER_KEY_GAP = 2;
+
+async function getNextOrderKey() {
+    const maxOrderKey = await repo.getMaxOrderKey();
+    return (maxOrderKey ?? 0) + ORDER_KEY_GAP;
+}
+
 // 'Quotation Review' only when pricing is complete; else 'Cost Missing'.
 function deriveCostSubStatus(asset) {
     const p = Array.isArray(asset?.Pricing) ? asset.Pricing[0] : null;
@@ -167,6 +175,8 @@ exports.createEnquiry = async (data, files = [], userId, referenceImageDescripti
         });
     }
 
+    rest.OrderKey = await getNextOrderKey();
+
     const enquiryData = {
         ...rest,
         StatusHistory
@@ -223,6 +233,45 @@ exports.createEnquiry = async (data, files = [], userId, referenceImageDescripti
     // queueMicrotask(() => regenerateSummary(enquiry._id));
 
     return enquiry._id;
+};
+
+exports.reSortEnquiries = async ({ draggedId, draggedOrderKey, targetId, targetOrderKey }) => {
+    if (!draggedId || !targetId) throw Object.assign(new Error('draggedId and targetId are required'), { status: 400 });
+    if (draggedId === targetId) throw Object.assign(new Error('draggedId cannot equal targetId'), { status: 400 });
+
+    const draggedKey = Number(draggedOrderKey);
+    const targetKey = Number(targetOrderKey);
+    if (!Number.isFinite(draggedKey) || !Number.isFinite(targetKey)) {
+        throw Object.assign(new Error('draggedOrderKey and targetOrderKey are required'), { status: 400 });
+    }
+
+    if (draggedKey === targetKey) return { _id: draggedId, OrderKey: draggedKey };
+
+    const movingUp = draggedKey > targetKey;
+    const rows = movingUp
+        ? await repo.getOrderKeysBefore(targetKey, draggedId, 2)
+        : await repo.getOrderKeysAfter(targetKey, draggedId, 2);
+
+    if (String(rows[0]?._id) !== String(targetId)) {
+        throw Object.assign(new Error('Enquiry list is out of date, please refresh'), { status: 409 });
+    }
+
+    const neighbourKey = rows[1]?.OrderKey ?? null;
+    const lowerKey = movingUp ? (neighbourKey ?? 0) : targetKey;
+    const upperKey = movingUp ? targetKey : (neighbourKey ?? targetKey + ORDER_KEY_GAP * 2);
+
+    if (upperKey - lowerKey < MIN_ORDER_KEY_GAP) {
+        throw Object.assign(new Error('No space left between enquiries, please refresh'), { status: 409 });
+    }
+
+    const newKey = (lowerKey + upperKey) / 2;
+
+    const updated = await repo.setOrderKey(draggedId, draggedKey, newKey);
+    if (!updated) {
+        throw Object.assign(new Error('Enquiry was moved by someone else, please refresh'), { status: 409 });
+    }
+
+    return { _id: draggedId, OrderKey: newKey };
 };
 
 exports.deleteEnquiry = async (id) => {
@@ -1262,7 +1311,9 @@ async function searchEnquiriesInternal(queryParams, options = {}) {
     // --- 2. Prepare Sorting ---
     const sortBy = queryParams.sortBy || 'AssignedDate'; // Default sort
     const sortOrder = queryParams.sortOrder === 'asc' ? 1 : -1;
-    const sort = { [sortBy]: sortOrder };
+    const sort = sortBy === 'priority'
+        ? { priority: sortOrder, orderKey: 1 }
+        : { [sortBy]: sortOrder };
 
     // --- 3. Extract Search Term ---
     // This is the value from your main search bar

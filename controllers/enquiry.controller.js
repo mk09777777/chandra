@@ -193,6 +193,19 @@ exports.searchEnquiries = async (req, res) => {
     }
 };
 
+exports.reSortEnquiries = async (req, res) => {
+    try {
+        const result = await service.reSortEnquiries(req.body);
+        res.json(result);
+    } catch (error) {
+        console.error("Error re-sorting enquiries:", error);
+        if (error.status) {
+            return res.status(error.status).json({ message: error.message });
+        }
+        res.status(500).json({ message: "Internal server error" });
+    }
+};
+
 exports.massActionEnquiries = async (req, res) => {
     try {
         const { enquiryIds, updateType, newStatus } = req.body;
