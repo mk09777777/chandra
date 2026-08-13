@@ -5,9 +5,9 @@ const codelistsService = require('./codelists.service');
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 const REQUIRED_BY_STATUS = {
-    coral:        ['Name', 'ClientId', 'Category', 'Priority', 'Metal.Color', 'Metal.Quality', 'StoneType', 'Remarks'],
-    cad:          ['Name', 'ClientId', 'Category', 'Priority', 'Metal.Color', 'Metal.Quality', 'StoneType', 'Remarks'],
-    approved_cad: ['Name', 'ClientId', 'Category', 'Priority', 'Metal.Color', 'Metal.Quality', 'StoneType', 'Remarks'],
+    coral:        ['Name', 'ClientId', 'Category', 'Priority', 'Metal.Color', 'Metal.Qualities', 'StoneTypes', 'Remarks'],
+    cad:          ['Name', 'ClientId', 'Category', 'Priority', 'Metal.Color', 'Metal.Qualities', 'StoneTypes', 'Remarks'],
+    approved_cad: ['Name', 'ClientId', 'Category', 'Priority', 'Metal.Color', 'Metal.Qualities', 'StoneTypes', 'Remarks'],
 };
 
 const CATEGORY_OPTIONS = ['Ring', 'Bracelet', 'Necklace', 'Earrings', 'Pendant', 'Other'];
@@ -21,8 +21,8 @@ const FIELD_LABELS = {
     'Category':      'Category',
     'Priority':      'Priority',
     'Metal.Color':   'Metal Colour',
-    'Metal.Quality': 'Metal Quality',
-    'StoneType':     'Stone Type',
+    'Metal.Qualities': 'Metal Qualities',
+    'StoneTypes':    'Stone Types',
     'Remarks':       'Remarks',
 };
 
@@ -85,11 +85,11 @@ Available clients (match by name from the message, return the "id" value as Clie
 Each client has a priority_order (lower number = more important client), used as the Priority baseline (see the Priority rule below):
 ${clientJson}
 
-Available stone types (match by name from the message, return the "name" value as StoneType):
+Available stone types (match by name from the message, return an array of matching "name" values as StoneTypes):
 ${stoneTypeJson}
 
 Return ONLY a valid JSON object with these keys (use null for anything not mentioned):
-{  "Name": "<A very short, self-descriptive label (3-5 words max) that captures the enquiry's most distinctive details for search. Prioritise in this order and include only what's needed to stay unique: standout feature (e.g. carat weight or stone cut) > StoneType > Category, then client only if space allows. Drop less essential details (metal colour, metal quality) to keep it short. Example: a 4.5ct emerald-cut lab grown 18K white gold ring -> '4.5ct Emerald Lab-Grown Ring'; a 14K CVD bracelet for MK -> 'CVD Bracelet for MK'. No full sentences, no generic titles like 'Jewellery Enquiry', never null>", "Name": "<short Very specific summary of the enquiry Not a generic title, something that can be used to describe it and searchable>",
+{  "Name": "<A very short, self-descriptive label (3-5 words max) that captures the enquiry's most distinctive details for search. Prioritise in this order and include only what's needed to stay unique: standout feature (e.g. carat weight or stone cut) > StoneTypes > Category, then client only if space allows. Drop less essential details (metal colour, metal quality) to keep it short. Example: a 4.5ct emerald-cut lab grown 18K white gold ring -> '4.5ct Emerald Lab-Grown Ring'; a 14K CVD bracelet for MK -> 'CVD Bracelet for MK'. No full sentences, no generic titles like 'Jewellery Enquiry', never null>", "Name": "<short Very specific summary of the enquiry Not a generic title, something that can be used to describe it and searchable>",
   "ClientId": "<matched client id or null>",
   "StyleNumber": "<style or design number if mentioned it would be 5 or 6 digits like R45252, E63464, etc. or null>",
   "Quantity": <number or null>,
@@ -98,9 +98,9 @@ Return ONLY a valid JSON object with these keys (use null for anything not menti
   "Budget": "<string or null>",
   "Metal": {
     "Color": "<Yellow Gold|White Gold|Rose Gold|Two Tone Rose White Gold|Two Tone Yellow White Gold|Three Tone Rose White Yellow| or null>",
-    "Quality": "<3K|9K|10K|14K|18K|22K|24K|Silver 925|Platinum or null>"
+    "Qualities": ["<metal qualities from message (array from 3K|9K|10K|14K|18K|22K|24K|Silver 925|Platinum), empty array [] if none>"]
   },
-  "StoneType": "<stone type from message or null>",
+  "StoneTypes": ["<stone types from message (array of names from the list above), empty array [] if none>"],
   "Stamping": "<string or null>",
   "Remarks": "<copy the exact original message here>",
   "SpecialRemarks": "<any special instructions or additional notes beyond the main request or null>",
@@ -127,14 +127,14 @@ exports.parseEnquiryMessage = async ({ message, mediaType }) => {
         'Category':      CATEGORY_OPTIONS.map(o => ({ label: o, value: o })),
         'Priority':      PRIORITY_OPTIONS.map(o => ({ label: o, value: o })),
         'Metal.Color':   METAL_COLOR_OPTIONS.map(o => ({ label: o, value: o })),
-        'Metal.Quality': METAL_QUALITY_OPTIONS.map(o => ({ label: o, value: o })),
-        'StoneType':     stoneTypeOptions,
+        'Metal.Qualities': METAL_QUALITY_OPTIONS.map(o => ({ label: o, value: o })),
+        'StoneTypes':    stoneTypeOptions,
         'Name':          [],
         'Remarks':       [],
     };
 
     const model = genAI.getGenerativeModel({
-        model: 'gemini-3.6-flash',
+        model: 'gemini-2.5-pro',
         systemInstruction: buildSystemPrompt(clients, stoneTypeValues),
         generationConfig: { temperature: 0, responseMimeType: 'application/json' },
     });
@@ -151,6 +151,27 @@ exports.parseEnquiryMessage = async ({ message, mediaType }) => {
     if (isMissing(parsed.Remarks)) {
         parsed.Remarks = message;
     }
+
+    // Normalize StoneTypes to a non-empty array; the LLM may return a single string, null or [].
+    if (typeof parsed.StoneTypes === 'string') {
+        parsed.StoneTypes = parsed.StoneTypes.trim() ? [parsed.StoneTypes.trim()] : [];
+    }
+    if (!Array.isArray(parsed.StoneTypes)) {
+        parsed.StoneTypes = [];
+    }
+    parsed.StoneTypes = [...new Set(parsed.StoneTypes.map(s => String(s).trim()).filter(Boolean))];
+
+    // Same normalization for Metal.Qualities; the LLM may return a single string, null or [].
+    if (!parsed.Metal || typeof parsed.Metal !== 'object') {
+        parsed.Metal = {};
+    }
+    if (typeof parsed.Metal.Qualities === 'string') {
+        parsed.Metal.Qualities = parsed.Metal.Qualities.trim() ? [parsed.Metal.Qualities.trim()] : [];
+    }
+    if (!Array.isArray(parsed.Metal.Qualities)) {
+        parsed.Metal.Qualities = [];
+    }
+    parsed.Metal.Qualities = [...new Set(parsed.Metal.Qualities.map(q => String(q).trim()).filter(Boolean))];
 
 
         // // Enforce the client-tier priority floor deterministically (only ever escalates).

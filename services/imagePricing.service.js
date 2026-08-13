@@ -1,5 +1,5 @@
 const sharp = require('sharp');
-const { calculatePricing } = require('./pricing.service');
+const { calculatePricing, loadPricingRefs } = require('./pricing.service');
 const { preprocessImage, extractTableWithTesseract, reconcileWithGemini, validateAndRetryRows } = require('./ocr.service');
 const { createConcurrencyLimiter } = require('../utils/concurrency');
 
@@ -62,29 +62,44 @@ function validateExtracted(data) {
     return data;
 }
 
-exports.extractAndPrice = runPricingLimited(async ({ imageBuffer, mimeType, clientId, stoneType, quantity, metalQuality, crop }) => {
+exports.extractAndPrice = runPricingLimited(async ({ imageBuffer, mimeType, clientId, stoneTypes, quantity, metalQualities, crop }) => {
     let workingBuffer = await cropByFractions(imageBuffer, crop);
     imageBuffer = null;
     const extracted = validateExtracted(await extractPricingDataFromImage(workingBuffer, mimeType));
     workingBuffer = null;
 
-    const resolvedMetalQuality = metalQuality || extracted.Metal?.Quality || null;
+    const types = (Array.isArray(stoneTypes) && stoneTypes.length)
+        ? [...new Set(stoneTypes.filter(Boolean))]
+        : [''];
 
-    const pricingDetails = {
-        Metal: {
-            Weight: extracted.Metal?.Weight || null,
-            Quality: resolvedMetalQuality,
-        },
+    const qualities = (Array.isArray(metalQualities) && metalQualities.length)
+        ? [...new Set(metalQualities.filter(Boolean))]
+        : [extracted.Metal?.Quality || null];
+
+    const baseDetails = {
         Quantity: quantity || 1,
-        Stones: (extracted.Stones || []).map(stone => ({
-            ...stone,
-            Type: stoneType || '',
-            Markup: 0,
-        })),
         TotalPieces: extracted.TotalPieces || 0,
     };
 
-    const pricing = await calculatePricing(pricingDetails, clientId);
+    const refs = await loadPricingRefs(clientId);
+
+    const pricing = [];
+    for (const quality of qualities) {
+        for (const type of types) {
+            pricing.push(await calculatePricing({
+                ...baseDetails,
+                Metal: {
+                    Weight: extracted.Metal?.Weight || null,
+                    Quality: quality,
+                },
+                Stones: (extracted.Stones || []).map(stone => ({
+                    ...stone,
+                    Type: type,
+                    Markup: 0,
+                })),
+            }, clientId, false, false, refs));
+        }
+    }
 
     return { extractedData: extracted, pricing };
 });

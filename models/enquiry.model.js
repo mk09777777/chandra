@@ -16,6 +16,7 @@ const MetalSchema = require('./common/metal.schema');
   }, { _id: false });
 
   const PricingSchema = new mongoose.Schema({
+    IsSentForApproaval: { type: Boolean, default: false },
     MetalPrice: { type: Number, default: 0 },
     DiamondsPrice: { type: Number, default: 0 },
     TotalPrice: { type: Number, default: 0 },
@@ -58,10 +59,10 @@ const enquirySchema = new mongoose.Schema({
     Priority: String,
     Metal: {
         Color: String,
-        Quality: String
+        Qualities: [String]
     },
     Category: String,
-    StoneType: String,
+    StoneTypes: [String],
     MetalWeight: {
         From: Number,
         To: Number,
