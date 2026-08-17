@@ -16,13 +16,7 @@ const METALS = (process.env.ESTIMATOR_METALS || '10K,14K,18K,22K,Silver 925')
 const STONE_TYPES = (process.env.ESTIMATOR_STONE_TYPES || 'NaturalRegular,NaturalLower,CVDLabGrown')
     .split(',').map(s => s.trim()).filter(Boolean);
 
-// Approximate metal densities (g/cc). Non-10K grams are derived from the AI's
-// 10K estimate by the density ratio (same physical ring, different metal).
-const DENSITY = {
-    '10K': 11.42, '14K': 13.07, '18K': 15.58, '22K': 17.80,
-    'Silver 925': 10.36, 'Platinum': 21.45,
-};
-const BASE_DENSITY = DENSITY['10K'];
+const { DENSITY, BASE_DENSITY } = require('../utils/metalDensity');
 
 // Round-brilliant approximation: a 6.5 mm round ≈ 1.00 ct.
 const MM_PER_CARAT = 6.5;
@@ -88,7 +82,7 @@ const responseSchema = {
 };
 
 const model = genAI.getGenerativeModel({
-    model: process.env.ESTIMATOR_MODEL || 'gemini-2.5-pro',
+    model: process.env.ESTIMATOR_MODEL || 'gemini-3.6-flash',
     systemInstruction: SYSTEM_PROMPT,
 });
 
