@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const controller = require('../controllers/enquiry.controller');
 const parseController = require('../controllers/enquiryParse.controller');
+const approvalParseController = require('../controllers/approvalParse.controller');
 const authenticateToken = require('../middleware/authenticateToken');
 const dynamicUpload = require('../middleware/dynamicUpload');
 const enquiryCreateUpload = require('../middleware/enquiryCreateUpload');
@@ -11,6 +12,7 @@ const enquiryCreateUpload = require('../middleware/enquiryCreateUpload');
 
 // AI parse — must be before /:id routes
 router.post('/parse', authenticateToken, parseController.parseEnquiry);
+router.post('/parse/approval_parse', approvalParseController.parseApproval);
 
 router.get('/export-pdf',
     authenticateToken,

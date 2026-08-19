@@ -34,6 +34,7 @@ function convertMetalWeight(weight, fromQuality, toQuality) {
     const fromDensity = densityFor(fromQuality);
     const toDensity = densityFor(toQuality);
     if (!fromDensity || !toDensity) return weight;
+    if (fromDensity === toDensity) return weight;
 
     return weight * (toDensity / fromDensity);
 }

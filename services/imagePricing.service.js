@@ -86,18 +86,18 @@ exports.extractAndPrice = runPricingLimited(async ({ imageBuffer, mimeType, clie
     const pricing = [];
     for (const quality of qualities) {
         for (const type of types) {
-          pricing.push(await calculatePricing({
+         pricing.push(await calculatePricing({
                 ...baseDetails,
                 Metal: {
                     Weight: extracted.Metal?.Weight || null,
-                    Quality: quality,
+                    Quality: extracted.Metal?.Quality || null,
                 },
                 Stones: (extracted.Stones || []).map(stone => ({
                     ...stone,
                     Type: type,
                     Markup: 0,
                 })),
-            }, clientId, false, false, refs));
+            }, clientId, false, false, quality, refs));
         }
     }
 
