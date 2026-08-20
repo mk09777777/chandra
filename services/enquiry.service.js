@@ -736,14 +736,18 @@ exports.updateAssetData = async (enquiryId, type, version, data, userId) => {
 
 // Extract the design geometry once, then price it for every metal quality and stone type
 // the enquiry asks for, so Coral/Cad.Pricing holds one entry per quality/type pair.
-async function priceUploadedStones(tableJson, enquiry, clientId, isOnlyMetalDesign) {
-    const types = (Array.isArray(enquiry.StoneTypes) && enquiry.StoneTypes.length)
-        ? [...new Set(enquiry.StoneTypes.filter(Boolean))]
-        : [];
+function toNameList(value) {
+    const raw = Array.isArray(value) ? value : (value == null ? [] : [value]);
+    return [...new Set(raw.map(item => String(item ?? '').trim()).filter(Boolean))];
+}
 
-    const qualities = (Array.isArray(enquiry.Metal?.Qualities) && enquiry.Metal.Qualities.length)
-        ? [...new Set(enquiry.Metal.Qualities.filter(Boolean))]
-        : (tableJson.Metal?.Quality ? [tableJson.Metal.Quality] : []);
+async function priceUploadedStones(tableJson, enquiry, clientId, isOnlyMetalDesign) {
+    const types = toNameList(enquiry.StoneTypes);
+
+    const fromQualities = toNameList(enquiry.Metal?.Qualities);
+    const qualities = fromQualities.length
+        ? fromQualities
+        : toNameList(enquiry.Metal?.Quality);
 
     if (!qualities.length) return null;
     if (!isOnlyMetalDesign && !types.length) return null;
@@ -758,15 +762,15 @@ async function priceUploadedStones(tableJson, enquiry, clientId, isOnlyMetalDesi
         const base = { ...tableJson, Metal: { Weight: metalWeight, Quality: quality } };
 
         if (isOnlyMetalDesign) {
-            pricing.push(await exports.calculatePricing({ ...base, Stones: [] }, clientId, false, false, refs));
+            pricing.push(await exports.calculatePricing({ ...base, Stones: [] }, clientId, true, false, '', refs));
             continue;
         }
 
         for (const type of types) {
             pricing.push(await exports.calculatePricing({
                 ...base,
-                Stones: tableJson.Stones.map(stone => ({ ...stone, Type: type, Markup: 0 })),
-            }, clientId, false, false, refs));
+                Stones: (tableJson.Stones || []).map(stone => ({ ...stone, Type: type, Markup: 0 })),
+            }, clientId, false, false, '', refs));
         }
     }
     return pricing;
@@ -1186,10 +1190,10 @@ exports.searchEnquiries = async (queryParams, userId) => {
 exports.getAggregatedCounts = async (queryParams, userId) => {
     const scopedParams = await scopeClientFilter(queryParams, userId);
 
-    // 1. Separate 'groupBy' from the rest of the filters
+   
     const { groupBy, ...filters } = scopedParams;
 
-    // 2. Validate groupBy
+
     if (!groupBy) {
         throw new Error("Missing 'groupBy' query parameter. Try 'status', 'client', or 'buckets'.");
     }
@@ -1198,7 +1202,7 @@ exports.getAggregatedCounts = async (queryParams, userId) => {
         throw new Error("Invalid aggregation type. Must be one of: " + allowedTypes.join(', '));
     }
 
-    // 3. Pass both groupBy and the filters object to the repository
+ 
     return await repo.aggregateBy(groupBy, filters);
 };
 
@@ -1247,11 +1251,10 @@ exports.exportEnquiriesPdf = async (queryParams, userId) => {
     const { reportType = 'enquiries-list', ...userParams } = scopedQuery;
     const format = reportsService.getFormat(reportType);
 
-    // Format's baseFilters override caller filters for the same key
-    // (e.g. coral-pending always forces status=Coral).
+
     const mergedParams = { ...userParams, ...(format.baseFilters || {}) };
 
-    // Apply the format's default sort only when the caller didn't pick one.
+
     if (format.defaultSort && !mergedParams.sortBy) {
         mergedParams.sortBy    = format.defaultSort.field;
         mergedParams.sortOrder = format.defaultSort.order;
@@ -1278,27 +1281,23 @@ async function searchEnquiriesInternal(queryParams, options = {}) {
         limit: limit
     };
 
-    // --- 2. Prepare Sorting ---
-    const sortBy = queryParams.sortBy || 'AssignedDate'; // Default sort
+
+    const sortBy = queryParams.sortBy || 'AssignedDate';
     const sortOrder = queryParams.sortOrder === 'asc' ? 1 : -1;
     const sort = { [sortBy]: sortOrder };
 
-    // --- 3. Extract Search Term ---
-    // This is the value from your main search bar
+
     const searchTerm = queryParams.search || null;
 
-    // --- 4. Extract Filters ---
-    // These are all other query params (e.g., status, priority, clientId)
     const reservedKeys = ['page', 'limit', 'sortBy', 'sortOrder', 'search'];
     const filters = {};
     for (const key in queryParams) {
-        // If it's not a reserved key and has a value, add it to filters
+
         if (!reservedKeys.includes(key) && queryParams[key]) {
             filters[key] = queryParams[key];
         }
     }
 
-    // Call the repository with the clearly separated objects
     const result = await repo.search(searchTerm, filters, sort, pagination);
 
     return {
