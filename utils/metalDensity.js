@@ -11,15 +11,17 @@ const DENSITY = {
     'Platinum': 21.45,
 };
 
-const BASE_DENSITY = DENSITY['10K'];
+function normalizeQuality(quality) {
+    return String(quality ?? '')
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, '')
+        .replace(/^(\d{1,2})kt$/, '$1k');
+}
 
 const DENSITY_BY_KEY = Object.fromEntries(
-    Object.entries(DENSITY).map(([quality, density]) => [quality.trim().toLowerCase(), density])
+    Object.entries(DENSITY).map(([quality, density]) => [normalizeQuality(quality), density])
 );
-
-function normalizeQuality(quality) {
-    return String(quality ?? '').trim().toLowerCase();
-}
 
 function densityFor(quality) {
     return DENSITY_BY_KEY[normalizeQuality(quality)] ?? null;
@@ -39,4 +41,4 @@ function convertMetalWeight(weight, fromQuality, toQuality) {
     return weight * (toDensity / fromDensity);
 }
 
-module.exports = { DENSITY, BASE_DENSITY, densityFor, convertMetalWeight };
+module.exports = { DENSITY, densityFor, convertMetalWeight };
