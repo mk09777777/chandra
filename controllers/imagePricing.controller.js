@@ -19,9 +19,6 @@ exports.extractAndPrice = async (req, res) => {
         return res.status(400).json({ error: 'stoneType is required' });
     }
 
-    const types = Array.isArray(stoneType) ? stoneType : [stoneType];
-    const qualities = Array.isArray(metalQuality) ? metalQuality : (metalQuality ? [metalQuality] : null);
-
     // Crop fractions (0..1) are optional. Only honoured when ALL four are real finite numbers,
     // otherwise the whole image is processed (a stray/partial value must not become a 0 crop).
     const cropNums = [cropX, cropY, cropW, cropH].map(Number);
@@ -35,9 +32,9 @@ exports.extractAndPrice = async (req, res) => {
             imageBuffer: req.file.buffer,
             mimeType: req.file.mimetype,
             clientId,
-            stoneTypes: types,
+            stoneType,
             quantity: quantity ? parseInt(quantity, 10) : 1,
-            metalQualities: qualities,
+            metalQuality,
             crop,
         });
         res.json(result);
