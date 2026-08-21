@@ -1,6 +1,7 @@
 const metalPricesService = require('./metalPrices.service');
 const clientService = require('./client.service');
 const { normalizeShape, isRoundShape } = require('../utils/shapes');
+const { convertMetalWeight } = require('../utils/metalDensity');
 const OpenAI = require('openai');
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -21,19 +22,23 @@ function normalizeMmSize(value) {
     return normalizeNumber(value);
 }
 
-async function loadPricingRefs(clientId) {
-    const [metalRates, client] = await Promise.all([
-        metalPricesService.getLatest(),
-        clientService.getClient(clientId),
-    ]);
-    return { metalRates, client };
+function parseKarat(quality) {
+    const match = quality?.toUpperCase().match(/^(\d{1,2})K(?:T)?$/);
+    return match ? parseInt(match[1], 10) : null;
 }
 
-async function resolvePricingContext(pricingDetails, clientId, isOnlyMetalDesign = false, isRecalculate = false, refs = {}) {
-    const todaysMetalRates = refs.metalRates ?? await metalPricesService.getLatest();
 
-    const metalWeight = parseFloat(pricingDetails.Metal.Weight) || 0;
-    const metalQuality = pricingDetails.Metal.Quality;
+async function resolvePricingContext(pricingDetails, clientId, isOnlyMetalDesign = false, isRecalculate = false, UpdatedmetalQuality = "") {
+    const todaysMetalRates = await metalPricesService.getLatest();
+    console.log(`[updatedMetalQuality] ${UpdatedmetalQuality}`,`oldMetalQuality] ${pricingDetails.Metal.Quality}`);
+
+    const baseQuality = pricingDetails.Metal.Quality;
+    const metalQuality = UpdatedmetalQuality || baseQuality;
+    const metalWeight = convertMetalWeight(
+        parseFloat(pricingDetails.Metal.Weight) || 0,
+        baseQuality,
+        metalQuality
+    );
     const metalRateOverride = pricingDetails.Metal.Rate;
     const MetalOunceOverride = pricingDetails.Metal.GoldRatePerOunce;
     const quantity = pricingDetails.Quantity || 1;
@@ -53,14 +58,18 @@ async function resolvePricingContext(pricingDetails, clientId, isOnlyMetalDesign
         const goldRate = gramRateFromOunce ?? metalRateOverride ?? todaysMetalRates.gold?.price ?? 0;
         metalFullRate = goldRate;
 
-        const match = metalQuality?.toUpperCase().match(/^(\d{1,2})K$/);
-        if (!match) throw new Error(`Invalid gold quality: ${metalQuality}`);
+        if (metalWeight === 0 || !metalQuality) {
+            metalRate = goldRate;
+        } else {
+            const karat = parseKarat(metalQuality);
+            if (!karat) throw new Error(`Invalid gold quality: ${metalQuality}`);
 
-        metalRate = (goldRate * parseInt(match[1], 10)) / 24;
-        console.log(`[pricing] gold rate: ${goldRate}, karat: ${match[1]}, metalRate: ${metalRate}`);
+            metalRate = (goldRate * karat) / 24;
+            console.log(`[pricing] gold rate: ${goldRate}, karat: ${karat}, metalRate: ${metalRate}`);
+        }
     }
 
-    const client = refs.client ?? await clientService.getClient(clientId);
+    const client = await clientService.getClient(clientId);
 
     const duties = isRecalculate ? {
         natural: pricingDetails?.NaturalDuties ?? 0,
@@ -316,7 +325,6 @@ function calculatePricingEngine(context) {
 }
 
 function formatPricingResponse(context, calc) {
-    console.log(context);
     return {
         MetalKT: context.metal.quality,
         GoldRate24K: +context.metal.fullRate.toFixed(3),
@@ -469,8 +477,8 @@ Generate a professional, concise pricing message following the exact format prov
     }
 }
 
-async function calculatePricing(pricingDetails, clientId, isOnlyMetalDesign = false, isRecalculate = false, refs = {}) {
-    const context = await resolvePricingContext(pricingDetails, clientId, isOnlyMetalDesign, isRecalculate, refs);
+async function calculatePricing(pricingDetails, clientId, isOnlyMetalDesign = false, isRecalculate = false, UpdatedmetalQuality = "") {
+    const context = await resolvePricingContext(pricingDetails, clientId, isOnlyMetalDesign, isRecalculate, UpdatedmetalQuality);
     const calculation = calculatePricingEngine(context);
     const result = formatPricingResponse(context, calculation);
 
@@ -483,10 +491,7 @@ async function calculatePricing(pricingDetails, clientId, isOnlyMetalDesign = fa
 
 module.exports = {
     calculatePricing,
-    loadPricingRefs,
     resolvePricingContext,
     calculatePricingEngine,
-    formatPricingResponse,
-    generatePricingMessage,
-    normalizeMmSize
+    formatPricingResponse
 };
