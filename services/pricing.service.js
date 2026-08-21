@@ -35,7 +35,10 @@ async function resolvePricingContext(pricingDetails, clientId, isOnlyMetalDesign
     const baseQuality = pricingDetails.Metal.Quality;
     const metalQuality = UpdatedmetalQuality || baseQuality;
     let  metalWeight = parseFloat(pricingDetails.Metal.Weight) || 0;
-    if (baseQuality !== metalQuality) {
+    if(baseQuality && metalQuality === 0){
+        metalWeight = parseFloat(pricingDetails.Metal.Weight) || 0;
+    }
+    else if (baseQuality !== metalQuality) {
        metalWeight = convertMetalWeight(
         parseFloat(pricingDetails.Metal.Weight) || 0,
         baseQuality,
