@@ -34,11 +34,17 @@ async function resolvePricingContext(pricingDetails, clientId, isOnlyMetalDesign
 
     const baseQuality = pricingDetails.Metal.Quality;
     const metalQuality = UpdatedmetalQuality || baseQuality;
-    const metalWeight = convertMetalWeight(
+    let  metalWeight = parseFloat(pricingDetails.Metal.Weight) || 0;
+    if (baseQuality !== metalQuality) {
+       metalWeight = convertMetalWeight(
         parseFloat(pricingDetails.Metal.Weight) || 0,
         baseQuality,
         metalQuality
     );
+    }
+    else {
+      metalWeight = parseFloat(pricingDetails.Metal.Weight) || 0;
+    }
     const metalRateOverride = pricingDetails.Metal.Rate;
     const MetalOunceOverride = pricingDetails.Metal.GoldRatePerOunce;
     const quantity = pricingDetails.Quantity || 1;
