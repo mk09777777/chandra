@@ -1,0 +1,787 @@
+{
+  "0.70": {
+    "sieveSizes": [
+      "00000-0000"
+    ],
+    "avgWeights": [
+      0.002
+    ]
+  },
+  "0.80": {
+    "sieveSizes": [
+      "0000-000 CRD"
+    ],
+    "avgWeights": [
+      0.003
+    ]
+  },
+  "0.90": {
+    "sieveSizes": [
+      "000-00 CRD"
+    ],
+    "avgWeights": [
+      0.004
+    ]
+  },
+  "1.00": {
+    "sieveSizes": [
+      "00-0 CRD"
+    ],
+    "avgWeights": [
+      0.005
+    ]
+  },
+  "1.10": {
+    "sieveSizes": [
+      "0-1 CRD"
+    ],
+    "avgWeights": [
+      0.006
+    ]
+  },
+  "1.15": {
+    "sieveSizes": [
+      "1-1.5 CRD"
+    ],
+    "avgWeights": [
+      0.007
+    ]
+  },
+  "1.20": {
+    "sieveSizes": [
+      "1.5-2 CRD"
+    ],
+    "avgWeights": [
+      0.008
+    ]
+  },
+  "1.25": {
+    "sieveSizes": [
+      "2-2.5 CRD"
+    ],
+    "avgWeights": [
+      0.009
+    ]
+  },
+  "1.30": {
+    "sieveSizes": [
+      "2.5-3 CRD"
+    ],
+    "avgWeights": [
+      0.01
+    ]
+  },
+  "1.35": {
+    "sieveSizes": [
+      "3-3.5 CRD"
+    ],
+    "avgWeights": [
+      0.011
+    ]
+  },
+  "1.40": {
+    "sieveSizes": [
+      "3.5-4 CRD"
+    ],
+    "avgWeights": [
+      0.012
+    ]
+  },
+  "1.45": {
+    "sieveSizes": [
+      "4-4.5 CRD"
+    ],
+    "avgWeights": [
+      0.0125
+    ]
+  },
+  "1.50": {
+    "sieveSizes": [
+      "4.5-5 CRD"
+    ],
+    "avgWeights": [
+      0.014
+    ]
+  },
+  "1.55": {
+    "sieveSizes": [
+      "5-5.5 CRD"
+    ],
+    "avgWeights": [
+      0.016
+    ]
+  },
+  "1.60": {
+    "sieveSizes": [
+      "5.5-6 CRD"
+    ],
+    "avgWeights": [
+      0.018
+    ]
+  },
+  "1.65": {
+    "sieveSizes": [
+      "5.75-6.25 CRD"
+    ],
+    "avgWeights": [
+      0.02
+    ]
+  },
+  "1.70": {
+    "sieveSizes": [
+      "6-6.5 CRD"
+    ],
+    "avgWeights": [
+      0.022
+    ]
+  },
+  "1.80": {
+    "sieveSizes": [
+      "6.5-7 CRD"
+    ],
+    "avgWeights": [
+      0.025
+    ]
+  },
+  "1.90": {
+    "sieveSizes": [
+      "7-7.5 CRD"
+    ],
+    "avgWeights": [
+      0.03
+    ]
+  },
+  "2.00": {
+    "sieveSizes": [
+      "7.5-8 CRD"
+    ],
+    "avgWeights": [
+      0.033
+    ]
+  },
+  "2.05": {
+    "sieveSizes": [
+      "7.75-8.25 CRD"
+    ],
+    "avgWeights": [
+      0.036
+    ]
+  },
+  "2.10": {
+    "sieveSizes": [
+      "8-8.5 CRD"
+    ],
+    "avgWeights": [
+      0.04
+    ]
+  },
+  "2.15": {
+    "sieveSizes": [
+      "8.25-8.75"
+    ],
+    "avgWeights": [
+      0.04
+    ]
+  },
+  "2.20": {
+    "sieveSizes": [
+      "8.5-9 CRD"
+    ],
+    "avgWeights": [
+      0.043
+    ]
+  },
+  "2.25": {
+    "sieveSizes": [
+      "8.75-9.25 CRD"
+    ],
+    "avgWeights": [
+      0.0455
+    ]
+  },
+  "2.30": {
+    "sieveSizes": [
+      "9-9.5 CRD"
+    ],
+    "avgWeights": [
+      0.05
+    ]
+  },
+  "2.35": {
+    "sieveSizes": [
+      "9.25-9.75 CRD"
+    ],
+    "avgWeights": [
+      0.052
+    ]
+  },
+  "2.40": {
+    "sieveSizes": [
+      "9.5-10 CRD"
+    ],
+    "avgWeights": [
+      0.056
+    ]
+  },
+  "2.45": {
+    "sieveSizes": [
+      "9.75-10.25 CRD"
+    ],
+    "avgWeights": [
+      0.06
+    ]
+  },
+  "2.50": {
+    "sieveSizes": [
+      "10-10.5 CRD"
+    ],
+    "avgWeights": [
+      0.062
+    ]
+  },
+  "2.60": {
+    "sieveSizes": [
+      "10.5-11 CRD"
+    ],
+    "avgWeights": [
+      0.07
+    ]
+  },
+  "2.65": {
+    "sieveSizes": [
+      "10.75-11.25"
+    ],
+    "avgWeights": [
+      0.075
+    ]
+  },
+  "2.70": {
+    "sieveSizes": [
+      "11-11.5 CRD"
+    ],
+    "avgWeights": [
+      0.08
+    ]
+  },
+  "2.75": {
+    "sieveSizes": [
+      "11.25-11.75 CRD"
+    ],
+    "avgWeights": [
+      0.0825
+    ]
+  },
+  "2.80": {
+    "sieveSizes": [
+      "11.5-12 CRD"
+    ],
+    "avgWeights": [
+      0.09
+    ]
+  },
+  "2.85": {
+    "sieveSizes": [
+      "11.75-12.25 CRD"
+    ],
+    "avgWeights": [
+      0.095
+    ]
+  },
+  "2.90": {
+    "sieveSizes": [
+      "12-12.5 CRD"
+    ],
+    "avgWeights": [
+      0.1
+    ]
+  },
+  "3.00": {
+    "sieveSizes": [
+      "12.5-13 CRD"
+    ],
+    "avgWeights": [
+      0.11
+    ]
+  },
+  "3.10": {
+    "sieveSizes": [
+      "13-13.5 CRD"
+    ],
+    "avgWeights": [
+      0.115
+    ]
+  },
+  "3.20": {
+    "sieveSizes": [
+      "13.5-14 CRD"
+    ],
+    "avgWeights": [
+      0.125
+    ]
+  },
+  "3.25": {
+    "sieveSizes": [
+      "13.75-14.25 CRD"
+    ],
+    "avgWeights": [
+      0.132
+    ]
+  },
+  "3.30": {
+    "sieveSizes": [
+      "14-14.5 CRD"
+    ],
+    "avgWeights": [
+      0.14
+    ]
+  },
+  "3.35": {
+    "sieveSizes": [
+      "14.25-14.75 CRD"
+    ],
+    "avgWeights": [
+      0.145
+    ]
+  },
+  "3.40": {
+    "sieveSizes": [
+      "14.5-15 CRD"
+    ],
+    "avgWeights": [
+      0.15
+    ]
+  },
+  "3.50": {
+    "sieveSizes": [
+      "15-15.5 CRD"
+    ],
+    "avgWeights": [
+      0.16
+    ]
+  },
+  "3.55": {
+    "sieveSizes": [
+      "3.55MMPT"
+    ],
+    "avgWeights": [
+      0.17
+    ]
+  },
+  "3.60": {
+    "sieveSizes": [
+      "3.60MMPT"
+    ],
+    "avgWeights": [
+      0.18
+    ]
+  },
+  "3.70": {
+    "sieveSizes": [
+      "3.70MMPT"
+    ],
+    "avgWeights": [
+      0.2
+    ]
+  },
+  "3.75": {
+    "sieveSizes": [
+      "3.75MMPT"
+    ],
+    "avgWeights": [
+      0.21
+    ]
+  },
+  "3.85": {
+    "sieveSizes": [
+      "3.85MMPT"
+    ],
+    "avgWeights": [
+      0.22
+    ]
+  },
+  "3.90": {
+    "sieveSizes": [
+      "3.90MMPT"
+    ],
+    "avgWeights": [
+      0.23
+    ]
+  },
+  "4.00": {
+    "sieveSizes": [
+      "4.00MMPT"
+    ],
+    "avgWeights": [
+      0.25
+    ]
+  },
+  "4.10": {
+    "sieveSizes": [
+      "4.10MMPT"
+    ],
+    "avgWeights": [
+      0.27
+    ]
+  },
+  "4.20": {
+    "sieveSizes": [
+      "4.20MMPT"
+    ],
+    "avgWeights": [
+      0.29
+    ]
+  },
+  "4.25": {
+    "sieveSizes": [
+      "4.25MMPT"
+    ],
+    "avgWeights": [
+      0.295
+    ]
+  },
+  "4.30": {
+    "sieveSizes": [
+      "4.30MMPT"
+    ],
+    "avgWeights": [
+      0.3
+    ]
+  },
+  "4.35": {
+    "sieveSizes": [
+      "4.35MMPT"
+    ],
+    "avgWeights": [
+      0.315
+    ]
+  },
+  "4.40": {
+    "sieveSizes": [
+      "4.40MMPT"
+    ],
+    "avgWeights": [
+      0.34
+    ]
+  },
+  "4.50": {
+    "sieveSizes": [
+      "4.50MMPT"
+    ],
+    "avgWeights": [
+      0.35
+    ]
+  },
+  "4.60": {
+    "sieveSizes": [
+      "4.60MMPT"
+    ],
+    "avgWeights": [
+      0.38
+    ]
+  },
+  "4.70": {
+    "sieveSizes": [
+      "4.70MMPT"
+    ],
+    "avgWeights": [
+      0.39
+    ]
+  },
+  "4.75": {
+    "sieveSizes": [
+      "4.75MMPT"
+    ],
+    "avgWeights": [
+      0.42
+    ]
+  },
+  "4.90": {
+    "sieveSizes": [
+      "4.90MMPT"
+    ],
+    "avgWeights": [
+      0.44
+    ]
+  },
+  "4.80": {
+    "sieveSizes": [
+      "4.8MMPT"
+    ],
+    "avgWeights": [
+      0.44
+    ]
+  },
+  "5.00": {
+    "sieveSizes": [
+      "5.00MMPT"
+    ],
+    "avgWeights": [
+      0.5
+    ]
+  },
+  "5.10": {
+    "sieveSizes": [
+      "5.10MMPT"
+    ],
+    "avgWeights": [
+      0.51
+    ]
+  },
+  "5.20": {
+    "sieveSizes": [
+      "5.20MMPT"
+    ],
+    "avgWeights": [
+      0.535
+    ]
+  },
+  "5.30": {
+    "sieveSizes": [
+      "5.30MMPT"
+    ],
+    "avgWeights": [
+      0.55
+    ]
+  },
+  "5.45": {
+    "sieveSizes": [
+      "5.45MMPT"
+    ],
+    "avgWeights": [
+      0.62
+    ]
+  },
+  "5.60": {
+    "sieveSizes": [
+      "5.60MMPT"
+    ],
+    "avgWeights": [
+      0.65
+    ]
+  },
+  "5.70": {
+    "sieveSizes": [
+      "5.70MMPT"
+    ],
+    "avgWeights": [
+      0.72
+    ]
+  },
+  "5.80": {
+    "sieveSizes": [
+      "5.80MMPT"
+    ],
+    "avgWeights": [
+      0.74
+    ]
+  },
+  "5.75": {
+    "sieveSizes": [
+      "5.75 MM"
+    ],
+    "avgWeights": [
+      0.75
+    ]
+  },
+  "6.00": {
+    "sieveSizes": [
+      "6.00MMPT"
+    ],
+    "avgWeights": [
+      0.88
+    ]
+  },
+  "6.10": {
+    "sieveSizes": [
+      "6.10MMPT"
+    ],
+    "avgWeights": [
+      0.9
+    ]
+  },
+  "6.20": {
+    "sieveSizes": [
+      "6.20MMPT"
+    ],
+    "avgWeights": [
+      0.94
+    ]
+  },
+  "6.50": {
+    "sieveSizes": [
+      "6.50MMPT"
+    ],
+    "avgWeights": [
+      1.0
+    ]
+  },
+  "6.40": {
+    "sieveSizes": [
+      "6.40MMPT"
+    ],
+    "avgWeights": [
+      1.01
+    ]
+  },
+  "6.60": {
+    "sieveSizes": [
+      "6.60MMPT"
+    ],
+    "avgWeights": [
+      1.06
+    ]
+  },
+  "6.70": {
+    "sieveSizes": [
+      "6.70MMPT"
+    ],
+    "avgWeights": [
+      1.11
+    ]
+  },
+  "6.80": {
+    "sieveSizes": [
+      "6.80MMPT"
+    ],
+    "avgWeights": [
+      1.2
+    ]
+  },
+  "7.00": {
+    "sieveSizes": [
+      "7.00MMPT"
+    ],
+    "avgWeights": [
+      1.25
+    ]
+  },
+  "7.10": {
+    "sieveSizes": [
+      "7.10MMPT"
+    ],
+    "avgWeights": [
+      1.35
+    ]
+  },
+  "7.20": {
+    "sieveSizes": [
+      "7.20MMPT"
+    ],
+    "avgWeights": [
+      1.4
+    ]
+  },
+  "7.30": {
+    "sieveSizes": [
+      "7.30MMPT"
+    ],
+    "avgWeights": [
+      1.5
+    ]
+  },
+  "7.40": {
+    "sieveSizes": [
+      "7.40MMPT"
+    ],
+    "avgWeights": [
+      1.5
+    ]
+  },
+  "7.50": {
+    "sieveSizes": [
+      "7.50MMPT"
+    ],
+    "avgWeights": [
+      1.6
+    ]
+  },
+  "7.70": {
+    "sieveSizes": [
+      "7.70MMPT"
+    ],
+    "avgWeights": [
+      1.75
+    ]
+  },
+  "7.80": {
+    "sieveSizes": [
+      "7.80MMPT"
+    ],
+    "avgWeights": [
+      1.83
+    ]
+  },
+  "8.00": {
+    "sieveSizes": [
+      "8.00MMPT"
+    ],
+    "avgWeights": [
+      2.0
+    ]
+  },
+  "8.10": {
+    "sieveSizes": [
+      "8.10MM"
+    ],
+    "avgWeights": [
+      2.0
+    ]
+  },
+  "8.40": {
+    "sieveSizes": [
+      "8.40MMPT"
+    ],
+    "avgWeights": [
+      2.25
+    ]
+  },
+  "8.70": {
+    "sieveSizes": [
+      "8.70MM",
+      "8.70MMPT"
+    ],
+    "avgWeights": [
+      2.5
+    ]
+  },
+  "9.00": {
+    "sieveSizes": [
+      "9.00MMPT"
+    ],
+    "avgWeights": [
+      2.75
+    ]
+  },
+  "9.10": {
+    "sieveSizes": [
+      "9.10MMPT"
+    ],
+    "avgWeights": [
+      3.0
+    ]
+  },
+  "9.20": {
+    "sieveSizes": [
+      "9.20MMPT"
+    ],
+    "avgWeights": [
+      3.0
+    ]
+  },
+  "9.70": {
+    "sieveSizes": [
+      "9.70MMPT"
+    ],
+    "avgWeights": [
+      3.5
+    ]
+  },
+  "10.90": {
+    "sieveSizes": [
+      "10.90MM"
+    ],
+    "avgWeights": [
+      5.0
+    ]
+  }
+}
