@@ -10,7 +10,7 @@ const codelistsService = require('../services/codelists.service');
 const notificationService = require('../services/notifications.service');
 const reportsService = require('../services/reports.service');
 const userScope = require('./userScope.service');
-const { calculatePricing: pricingCalculate, loadPricingRefs } = require('./pricing.service');
+const { calculatePricing: pricingCalculate } = require('./pricing.service');
 const { extractPricingDataFromImage } = require('./imagePricing.service');
 const { normalizeShape } = require('../utils/shapes');
 const { deriveSubStatus, isValidPair, appendStatusEntry } = require('../utils/enquiryStatus');
@@ -736,14 +736,18 @@ exports.updateAssetData = async (enquiryId, type, version, data, userId) => {
 
 // Extract the design geometry once, then price it for every metal quality and stone type
 // the enquiry asks for, so Coral/Cad.Pricing holds one entry per quality/type pair.
-async function priceUploadedStones(tableJson, enquiry, clientId, isOnlyMetalDesign) {
-    const types = (Array.isArray(enquiry.StoneTypes) && enquiry.StoneTypes.length)
-        ? [...new Set(enquiry.StoneTypes.filter(Boolean))]
-        : [];
+function toNameList(value) {
+    const raw = Array.isArray(value) ? value : (value == null ? [] : [value]);
+    return [...new Set(raw.map(item => String(item ?? '').trim()).filter(Boolean))];
+}
 
-    const qualities = (Array.isArray(enquiry.Metal?.Qualities) && enquiry.Metal.Qualities.length)
-        ? [...new Set(enquiry.Metal.Qualities.filter(Boolean))]
-        : (tableJson.Metal?.Quality ? [tableJson.Metal.Quality] : []);
+async function priceUploadedStones(tableJson, enquiry, clientId, isOnlyMetalDesign) {
+    const types = toNameList(enquiry.StoneTypes);
+
+    const fromQualities = toNameList(enquiry.Metal?.Qualities);
+    const qualities = fromQualities.length
+        ? fromQualities
+        : toNameList(enquiry.Metal?.Quality);
 
     if (!qualities.length) return null;
     if (!isOnlyMetalDesign && !types.length) return null;
@@ -751,22 +755,20 @@ async function priceUploadedStones(tableJson, enquiry, clientId, isOnlyMetalDesi
     const metalWeight = tableJson.Metal?.Weight || 0;
     tableJson.Quantity = enquiry.Quantity || 1;
 
-    const refs = await loadPricingRefs(clientId);
-
     const pricing = [];
     for (const quality of qualities) {
         const base = { ...tableJson, Metal: { Weight: metalWeight, Quality: quality } };
 
         if (isOnlyMetalDesign) {
-            pricing.push(await exports.calculatePricing({ ...base, Stones: [] }, clientId, false, false, refs));
+            pricing.push(await exports.calculatePricing({ ...base, Stones: [] }, clientId, true, false, ''));
             continue;
         }
 
         for (const type of types) {
             pricing.push(await exports.calculatePricing({
                 ...base,
-                Stones: tableJson.Stones.map(stone => ({ ...stone, Type: type, Markup: 0 })),
-            }, clientId, false, false, refs));
+                Stones: (tableJson.Stones || []).map(stone => ({ ...stone, Type: type, Markup: 0 })),
+            }, clientId, false, false, ''));
         }
     }
     return pricing;
