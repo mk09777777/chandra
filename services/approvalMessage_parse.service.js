@@ -1,5 +1,7 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const codelistsService = require('./codelists.service');
+const checklistExtractionService = require('./checklistExtraction.service');
+const { convertMetalWeight } = require('../utils/metalDensity');
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
@@ -76,11 +78,6 @@ const RESPONSE_SCHEMA = {
         engraving: { type: 'STRING', nullable: true },
         finish: { type: 'STRING', nullable: true },
         specialRemarks: { type: 'STRING', nullable: true },
-        checklist: {
-            type: 'OBJECT',
-            properties: Object.fromEntries(CHECKLIST_KEYS.map(k => [k, { type: 'STRING', nullable: true }])),
-            propertyOrdering: CHECKLIST_KEYS,
-        },
         questions: {
             type: 'ARRAY',
             items: {
@@ -95,7 +92,7 @@ const RESPONSE_SCHEMA = {
         },
     },
     required: ['decision'],
-    propertyOrdering: [...SPEC_FIELDS, 'checklist', 'questions'],
+    propertyOrdering: [...SPEC_FIELDS, 'questions'],
 };
 
 function buildSystemPrompt(stoneTypes, mode) {
@@ -168,20 +165,21 @@ is all ("rose at the back, white in the front" → "Two-tone — rose and white"
 a question because it is never stored. Strip all/full/instead of/changed from and anything about the old colour.
 
 ═══ metal, stone type and diamond quality ═══
-metal is the karat with a T — "14K", "14kt", "14 k" all → "14KT". Platinum stays "Platinum".
-On a metal change fill metal ONLY: leave weightRange and maxWeight null and never ask about them, because the
-system recomputes the gram band itself from the quoted weight. You never do that arithmetic.
-The stones do not move with the metal — carat, count and size stay exactly as quoted.
+Classify each phrase by what it describes, using its words and units together rather than matching a number alone.
 
-stoneType is one of a known list: "Type 1" · "Type 2" · "Type 3" (lab tiers) · "Natural regular" ·
-"Natural higher" · "Natural lower" (natural tiers) · "Natural" · "Lab-grown" (when he names no tier).
-The system's own stone list is: ${systemStoneList}
-Map his wording onto that list by meaning — a tier number in any form is that Type, "high/better/premium"
-is Natural higher, "low/cheaper" is Natural lower, "normal/standard" is Natural regular, and CVD or lab grown
-is Lab-grown.
-A TIER IS NOT A CLARITY. Tiers go in stoneType; diamondQuality is only VVS / VS / VS1 / VS2 / SI and the like.
-One message can carry both. Changing tier or natural↔lab moves the price only — no gram, carat or design
-change, and no question. Never quote a price back to the client; the recalculation stays internal.
+metal describes the metal material or purity: karat expressions such as 3K, 9K, 10K, 14K, 18K, 22K and 24K,
+including common forms such as "3kt", "14 k", "18 karat" and phrases such as "3kt quality"; also Silver 925
+and Platinum. Normalize numeric karat values as "3KT", "14KT", and so on. A number attached to K, KT or karat
+is metal purity, not a stone tier. On a metal change fill metal only; weight conversion is handled by the system.
+
+stoneType describes the kind or tier of stone/diamond. Use the meaning of the whole phrase and match it to the
+system's stone list: ${systemStoneList}. Wording such as CVD or lab-grown describes a lab stone; natural describes
+a natural stone; an explicit stone/diamond type or tier belongs here. Do not turn an unrelated number, metal karat,
+size, weight, price, quantity or clarity grade into a stone type.
+
+diamondQuality describes clarity/quality grades such as VVS, VS, VS1, VS2, SI and similar grades. It is separate
+from stoneType. One reply may change metal, stone type and diamond quality independently; only return the fields
+the client actually changed from the selected quotation.
 
 ═══ budget reduction ═══
 When he asks for it cheaper without naming a figure, budget is "Reduce by $300"; if he names one, use his.
@@ -257,49 +255,17 @@ Then read WHAT IS LEFT after the quotation line. Real instructions sit alongside
   "threaded post please" → "Threaded post". "make full eternity" → "Full eternity setting".
 · "X instead of Y" and "not Y, X" mean X is the target. Take the left side.
 · Numbers with no unit ("make it 35") are ambiguous — do not guess. Leave the key null and ask.
+· A VAGUE SIZE WORD IS NOT A CHANGE YET. "Small", "smaller", "big", "bigger", "compact" with no measurement
+  never fills designChange — never write "Reduce overall size" or anything like it. Leave designChange null,
+  ask nothing else, and put one question on it: which dimension — height, width or length. designChange is
+  written only once a real figure exists, and then it holds that measurement alone ("Height 5.6 inch"),
+  specialRemarks carries it to the bench as an order ("Overall height 5.6 inch."), and no vague phrase
+  survives next to the figure.
 · Never write a price for the client. Price changes stay internal.
 · NEVER invent a value. If the client asked for something but did not say what, the key stays null and you ask a
   question for it. A guessed value is worse than an empty one.
 · Hinglish is normal. kam/kum karo = reduce · thoda = a little · same rakho = keep the same · chahiye = wants ·
   jaldi = urgent · nahi/mat = not · badhao = increase · theek hai = fine.
-
-═══ THE ENQUIRY CHECKLIST ═══
-There is a second, separate object called "checklist". It is the checklist the workshop opens the enquiry with, and
-it has exactly these nine keys. Fill a key ONLY if the client actually mentioned that thing in this message.
-Anything he did not mention stays null — the system writes "NA" into it.
-
-Engraving            any letters on the piece — initials, name, word, date, monogram, hallmark, stamp,
-                     logo — and where they go. Keep the characters exactly as the client wrote them.
-SizeLength           a length — chain, bracelet, necklace ("22 inch", "18 in")
-SizeRingSize         a ring size ("size 7", "US 6.5") — never a length, never grams
-DimensionsThickness  an outer measurement or thickness — mm of a bale, band width, how thick or thin
-DeliveryDate         the date it must be in hand, as "20 Sep" and nothing else
-EnamelPaintwork      enamel, paint, colour fill, meena
-RhodiumInstructions  rhodium, black rhodium, plating instructions, "no rhodium"
-Components           parts that make up the piece — chain, clasp, extra charm, jump ring, back plate
-Findings             post type, backs, locks, clasps
-
-FINDINGS VOCABULARY — when the client names a finding, return that exact finding. The house forms are:
-    Chain - Light · Chain - Medium · Chain - Heavy · Nutpost · Lock - Handmade · Lock - Ready Made
-Findings is a SINGLE field. If he names one, return it; if he names none, leave it null.
-
-HOW THE CHECKLIST IS READ — the same discipline the enquiry is opened with:
-· Extract only what the client explicitly stated. Do not infer, assume, calculate or guess.
-· Preserve the client's own wording wherever you can. Write a short instruction, not a sentence.
-· A key he did not mention stays null — the system writes "NA" into it.
-· If he gives more than one value for one key, combine them into a single string.
-
-The checklist is not a copy of the keys above — it is the workshop's own list, and one message fills both where
-they overlap: "size 7" fills "size" AND checklist.SizeRingSize; "22 inch chain" fills checklist.SizeLength AND
-checklist.Components; an engraving fills "engraving" AND checklist.Engraving with the characters exactly as he
-wrote them; a finding fills "findings" AND checklist.Findings; a date fills "deliveryDate" AND
-checklist.DeliveryDate as the same "20 Sep" value; enamel, paint, colour fill or meena fills "finish" AND
-checklist.EnamelPaintwork; rhodium fills "finish" AND checklist.RhodiumInstructions; a stated thickness, band
-width or bale measurement fills checklist.DimensionsThickness even when the change itself sits in designChange.
-
-A design instruction never lands in designChange ALONE when part of it belongs to a checklist key. Split it:
-the shape, layout or setting stays in designChange, and the treatment, measurement or component inside it also
-fills the checklist key that carries it.
 
 ═══ questions — THE MISSING VALUES ═══
 Whenever the client clearly asked for something but did NOT give the value it needs, leave that key null and put a
@@ -320,7 +286,7 @@ Never a sentence. Never "he said" or "the client". Never more than four. Empty l
 
 ═══ EXAMPLES — only where the exact wording is a convention you cannot derive ═══
 "ok, need it in 2 days"
-→ {"decision":"Approved with date","deliveryDate":"${ex2d}","priority":"High","checklist":{"DeliveryDate":"${ex2d}"}}
+→ {"decision":"Approved with date","deliveryDate":"${ex2d}","priority":"High"}
 
 "thoda budget kam karo, size same rakho"
 → {"decision":"Approved","designChange":"Outer dimensions unchanged — hollow the solid, grill the back, thin the metal","specialRemarks":"Size and outer dimensions must not change.","questions":[{"field":"budget","ask":"Budget figure?"}]}
@@ -331,8 +297,14 @@ Never a sentence. Never "he said" or "the client". Never more than four. Empty l
 "approved, ruby in the eyes"
 → {"decision":"Approved","colourStone":"Synthetic ruby — in the eyes","specialRemarks":"Note: synthetic ruby in the eyes."}
 
+"want it small"   (no dimension given)
+→ {"decision":"Approved","questions":[{"field":"designChange","ask":"Which dimension?"}]}
+
+"want it small", then asked and the handler said "5.6 inch height"   (follow-up)
+→ {"decision":"Approved","designChange":"Height 5.6 inch","specialRemarks":"Overall height 5.6 inch."}
+
 "Approx 2600-2625/- 15.95 carats CVD, 50-55 grams Silver. All white. Need by Sept 1st"
-→ {"decision":"Approved with date","colour":"White gold","deliveryDate":"1 Sep","checklist":{"DeliveryDate":"1 Sep"}}
+→ {"decision":"Approved with date","colour":"White gold","deliveryDate":"1 Sep"}
 
 "too expensive for them right now"   (redo mode)
 → {"decision":"Redo","reason":"PRICE","specialRemarks":"Client says the price is too high for them at the moment."}
@@ -380,6 +352,7 @@ function buildFollowUpText({ message, previous, answers }) {
         'An answer of "don\'t know", "skip", "no idea" or similar means the client never said — set that key to exactly ' +
             `"${UNSPEC}" so the designer can see the change was asked for, and drop the question.`,
         'Never drop the change itself just because the detail is missing.',
+        'Rewrite specialRemarks around the answers — each answer becomes a concrete order to the bench, and any vague phrase it replaces ("overall size to be smaller", and the like) is dropped.',
         'Keep everything you already had right. Only ask again if an answer itself left something missing.',
     ].join('\n');
 }
@@ -414,16 +387,37 @@ function isSkipAnswer(value) {
 const kt = t => { const m = String(t || '').match(/(\d{1,2})\s*k/i); return m ? +m[1] : null };
 const g1 = n => (Math.round(n * 10) / 10).toString().replace(/\.0$/, '');
 
+function qualityFor(value) {
+    const v = String(value || '').trim();
+    if (/plat/i.test(v)) return 'Platinum';
+    if (/silver/i.test(v)) return 'Silver 925';
+    const k = kt(v);
+    return k ? `${k}K` : v;
+}
+
 function scaleWeight(enquiry, record) {
     const q = (enquiry && enquiry.quote) || {};
-    const K1 = kt(q.metal), K2 = kt(record.metal);
-    if (!K1 || !K2 || K1 === K2) return;
-    const band = String(q.weight || '').match(/([\d.]+)\s*[–—\-to]+\s*([\d.]+)/);
-    if (!band) return;
-    const lo = +band[1] * K2 / K1, hi = +band[2] * K2 / K1;
-    if (!isFinite(lo) || !isFinite(hi)) return;
-    record.weightRange = g1(lo) + '–' + g1(hi) + ' g';
-    record.maxWeight = g1(hi) + ' g';
+    const fromQuality = qualityFor(q.metal);
+    const toQuality = qualityFor(record.metal);
+    const quotedWeight = String(q.weight || '').trim();
+    if (!fromQuality || !toQuality || !quotedWeight) return;
+
+    const band = quotedWeight.match(/([\d.]+)\s*(?:–|—|-|to)\s*([\d.]+)\s*(?:g|gm|grams?)?/i);
+    if (band) {
+        const lo = convertMetalWeight(+band[1], fromQuality, toQuality);
+        const hi = convertMetalWeight(+band[2], fromQuality, toQuality);
+        if (!isFinite(lo) || !isFinite(hi)) return;
+        record.weightRange = g1(lo) + '–' + g1(hi) + ' g';
+        record.maxWeight = g1(hi) + ' g';
+        return;
+    }
+
+    const exact = quotedWeight.match(/([\d.]+)\s*(?:g|gm|grams?)?/i);
+    if (!exact) return;
+    const converted = convertMetalWeight(+exact[1], fromQuality, toQuality);
+    if (!isFinite(converted)) return;
+    record.weightRange = g1(converted) + ' g';
+    record.maxWeight = g1(converted) + ' g';
 }
 
 function cleanSpec(parsed, mode) {
@@ -537,12 +531,35 @@ async function callGemini({ enquiry, mode, message, previous, answers, stoneType
     return parsed;
 }
 
+function buildChecklistText({ message, answers }) {
+    const parts = [];
+    if (message && String(message).trim()) parts.push(String(message).trim());
+    for (const a of Array.isArray(answers) ? answers : []) {
+        if (a && a.field && a.answer && String(a.answer).trim()) {
+            parts.push(`${a.field}: ${String(a.answer).trim()}`);
+        }
+    }
+    return parts.join('\n\n');
+}
+
+async function extractChecklist({ message, answers }) {
+    const instructionsText = buildChecklistText({ message, answers });
+    if (!instructionsText) return {};
+    const extracted = await checklistExtractionService.extractChecklist({
+        remarks: instructionsText,
+    });
+    return extracted || {};
+}
+
 exports.parseApprovalMessage = async ({ enquiry, mode, message, previous, answers } = {}) => {
     const text = String(message || '').trim();
     if (!text) throw new Error('message is required');
 
     const stoneTypes = (await codelistsService.getCodelistByName('StoneTypes')) || [];
-    const parsed = await callGemini({ enquiry, mode, message: text, previous, answers, stoneTypes });
+    const [parsed, extractedChecklist] = await Promise.all([
+        callGemini({ enquiry, mode, message: text, previous, answers, stoneTypes }),
+        extractChecklist({ message: text, answers }),
+    ]);
 
     const hasAnswers = Array.isArray(answers) && answers.some(a => a && a.field && a.answer && String(a.answer).trim());
     let record = hasAnswers ? mergePrevious(previous, mode) : {};
@@ -568,7 +585,7 @@ exports.parseApprovalMessage = async ({ enquiry, mode, message, previous, answer
 
     return {
         ...record,
-        checklist: cleanChecklist(parsed),
+        checklist: cleanChecklist({ checklist: extractedChecklist }),
         questions: cleanQuestions(parsed),
     };
 };
