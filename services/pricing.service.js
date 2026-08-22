@@ -11,8 +11,6 @@ The format template may include placeholders like {TotalPrice}, {MetalPrice}, {D
 Generate a professional, concise pricing message following the exact format provided.`,
 });
 
-const roundIdentifier = "RD";
-
 function normalizeNumber(num) {
   const n = parseFloat(num);
   return isNaN(n) ? num : n.toString();

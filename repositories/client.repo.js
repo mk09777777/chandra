@@ -3,7 +3,7 @@ const Client = require('../models/client.model');
 // Get all clients
 exports.getAllClients = async () => {
   try {
-    return await Client.find().select({ Name: 1, ImageUrl: 1 });
+    return await Client.find().select({ Name: 1, ImageUrl: 1, PriorityOrder: 1, PricingMessageFormat: 1, ApplicableStoneTypes: 1 });
   } catch (error) {
     throw new Error('Error fetching all clients: ' + error.message);
   }

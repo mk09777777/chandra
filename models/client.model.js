@@ -12,7 +12,10 @@ const DiamondSchema = new mongoose.Schema({
   const PricingSchema = new mongoose.Schema({
     Loss: { type: Number },
     Labour: { type: Number },
-    ExtraCharges: { type: Number },
+    ExtraCharges: {
+        Type: { type: String, enum: ['percentage', 'fixed'] },
+        Value: { type: Number }
+    },
     NaturalDuties: { type: Number },
     LabDuties: { type: Number },
     GoldDuties: { type: Number },
@@ -27,7 +30,8 @@ const DiamondSchema = new mongoose.Schema({
     ImageUrl: { type: String },
     PriorityOrder: { type: Number },
     Pricing: PricingSchema,
-    PricingMessageFormat: { type: String }
+    PricingMessageFormat: { type: String },
+    ApplicableStoneTypes: { type: [String], default: [] }
   });
   
   module.exports = mongoose.model('Client', ClientSchema);

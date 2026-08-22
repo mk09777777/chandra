@@ -2,6 +2,7 @@ const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+const { compressImageBuffer } = require('./imageCompression');
 require('dotenv').config();
 
 const s3 = new S3Client({
@@ -37,10 +38,13 @@ function assertValidS3Key(key) {
 async function uploadToS3(file) {
   const key = `${Date.now()}-${uuidv4()}-${sanitizeS3Key(file.originalname)}`;
 
+  // Compress images in place (same format); non-images / no-gain return the original buffer.
+  const body = await compressImageBuffer(file.buffer, file.mimetype);
+
   const command = new PutObjectCommand({
     Bucket: process.env.AWS_BUCKET_NAME,
     Key: key,
-    Body: file.buffer,
+    Body: body,
     ContentType: file.mimetype
   });
 
@@ -61,5 +65,4 @@ async function generatePresignedUrl(key, disposition = 'inline') {
   const url = await getSignedUrl(s3, command, { expiresIn: 3600 });
   return url;
 }
-
 module.exports = { uploadToS3, generatePresignedUrl, sanitizeS3Key, assertValidS3Key };

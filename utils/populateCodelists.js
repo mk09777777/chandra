@@ -6,7 +6,8 @@ const Codelist = require('../models/codelists.model'); // Adjust path as necessa
 //         { Id: 1, Code: 'AD', Name: 'Admin' },
 //         { Id: 2, Code: 'CO', Name: 'Coral' },
 //         { Id: 3, Code: 'CD', Name: 'Cad' },
-//         { Id: 4, Code: 'CL', Name: 'Client' }
+//         { Id: 4, Code: 'CL', Name: 'Client' },
+//         { Id: 5, Code: 'CH', Name: 'Client Handler' }
 //     ];
 
 //     try {
@@ -43,17 +44,12 @@ const Codelist = require('../models/codelists.model'); // Adjust path as necessa
 //         {
 //             "Id": 7,
 //             "Code": "CD",
-//             "Name": "CAD"
+//             "Name": "Cad"
 //         },
 //         {
 //             "Id": 10,
 //             "Code": "AC",
 //             "Name": "Approved Cad"
-//         },
-//         {
-//             "Id": 12,
-//             "Code": "QT",
-//             "Name": "Quotation"
 //         },
 //         {
 //             "Id": 13,
@@ -129,3 +125,62 @@ const Codelist = require('../models/codelists.model'); // Adjust path as necessa
 // }
 
 // exports.createStoneTypesCodelist = createStoneTypesCodelist;
+
+// L2 sub-statuses under the Coral/Cad phase. Run once, then comment out.
+async function createSubStatusCodelist() {
+    const subStatusValues = [
+        { Id: 1, Code: 'AP', Name: 'Assign Pending' },
+        { Id: 2, Code: 'AS', Name: 'Assigned' },
+        { Id: 3, Code: 'RR', Name: 'Rejected - Redo' },
+        { Id: 4, Code: 'DS', Name: 'Design Submitted' },
+        { Id: 5, Code: 'CM', Name: 'Cost Missing' },
+        { Id: 6, Code: 'QR', Name: 'Quotation Review' },
+    ];
+
+    try {
+        const newCodelist = new Codelist({
+            Type: 'SubStatus',
+            Values: subStatusValues
+        });
+
+        const result = await newCodelist.save();
+        console.log("Successfully created Codelist for 'SubStatus':", result);
+    } catch (err) {
+        console.error("Error creating SubStatus Codelist:", err);
+    }
+}
+
+exports.createSubStatusCodelist = createSubStatusCodelist;
+
+async function createStoneShapesCodelist() {
+    const values = [
+        { Id: 1,  Code: 'RD', Name: 'Round' },
+        { Id: 2,  Code: 'OV', Name: 'Oval' },
+        { Id: 3,  Code: 'EM', Name: 'Emerald' },
+        { Id: 4,  Code: 'PS', Name: 'Pear' },
+        { Id: 5,  Code: 'PR', Name: 'Princess' },
+        { Id: 6,  Code: 'CU', Name: 'Cushion' },
+        { Id: 7,  Code: 'MQ', Name: 'Marquise' },
+        { Id: 8,  Code: 'RA', Name: 'Radiant' },
+        { Id: 9,  Code: 'AS', Name: 'Asscher' },
+        { Id: 10, Code: 'HT', Name: 'Heart' },
+        { Id: 11, Code: 'BG', Name: 'Baguette' },
+        { Id: 12, Code: 'TB', Name: 'Tapered Baguette' },
+        { Id: 13, Code: 'TR', Name: 'Trillion' },
+        { Id: 14, Code: 'HM', Name: 'Half Moon' },
+        { Id: 15, Code: 'SQ', Name: 'Square' },
+    ];
+
+    try {
+        const newCodelist = new Codelist({
+            Type: 'StoneShapes',
+            Values: values
+        });
+        const result = await newCodelist.save();
+        console.log("Successfully created Codelist for 'StoneShapes':", result);
+    } catch (err) {
+        console.error("Error creating StoneShapes Codelist:", err);
+    }
+}
+
+exports.createStoneShapesCodelist = createStoneShapesCodelist;

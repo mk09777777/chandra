@@ -7,12 +7,12 @@ exports.getUsers = async () => {
 };
 
 exports.createUser = async (data) => {
-    const { name, email, phone, role, password, clientId, skills, group } = data;
+    const { name, email, phone, role, password, clientId, clientsHandled, skills, group } = data;
     const hashedPassword = await bcrypt.hash(password, 10);
-    return await repo.createUser({ name, email, phone, role, password: hashedPassword, clientId, skills, group });
+    return await repo.createUser({ name, email, phone, role, password: hashedPassword, clientId, clientsHandled, skills, group });
 };
 
-const UPDATABLE_FIELDS = ['name', 'email', 'phone', 'role', 'clientId', 'skills', 'group'];
+const UPDATABLE_FIELDS = ['name', 'email', 'phone', 'role', 'clientId', 'clientsHandled', 'skills', 'group'];
 
 exports.updateUser = async (id, data) => {
     const update = {};
@@ -37,6 +37,10 @@ exports.getUsersByRoleFull = async (roleId) => {
 
 exports.getUsersByClient = async (clientId) => {
     return await repo.getUsersByClient(clientId);
+}
+
+exports.getClientHandlersForClient = async (clientId) => {
+    return await repo.getClientHandlersForClient(clientId);
 }
 
 exports.savePushToken = async (userId, token) => {

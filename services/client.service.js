@@ -1,4 +1,13 @@
 const repo = require('../repositories/client.repo');
+const codelistsService = require('./codelists.service');
+
+// Canonicalize ApplicableStoneTypes (case-insensitive, accept-anything) when present.
+async function normalizeApplicableStoneTypes(data) {
+  if (data && data.ApplicableStoneTypes !== undefined) {
+    data.ApplicableStoneTypes = await codelistsService.canonicalizeStoneTypes(data.ApplicableStoneTypes);
+  }
+  return data;
+}
 
 exports.getClients = async () => {
   try {
@@ -18,6 +27,7 @@ exports.getClient = async (id) => {
 
 exports.createClient = async (data) => {
   try {
+    await normalizeApplicableStoneTypes(data);
     return await repo.createClient(data); // Await the promise from the repository
   } catch (err) {
     throw new Error('Error creating client: ' + err.message);
@@ -26,6 +36,7 @@ exports.createClient = async (data) => {
 
 exports.updateClient = async (id, data) => {
   try {
+    await normalizeApplicableStoneTypes(data);
     return await repo.updateClient(id, data); // Await the promise from the repository
   } catch (err) {
     throw new Error('Error updating client: ' + err.message);

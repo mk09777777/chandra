@@ -1,19 +1,48 @@
-const OpenAI = require('openai');
-const { generatePresignedUrl } = require('../utils/s3');
+const { GoogleGenerativeAI, SchemaType } = require('@google/generative-ai');
+const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
+const { generateEmbedding, generateTextEmbedding } = require('../utils/embedding');
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
+const s3 = new S3Client({
+    region: process.env.AWS_REGION,
+    credentials: {
+        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+    },
+});
 
 const VISION_PROMPT = `You are a jewellery expert analysing a reference image for a manufacturing studio.
 Extract every detail a designer would need to identify, classify, or recreate this piece.
-Return ONLY a JSON object with no markdown or commentary:
-{
-  "description": "<detailed paragraph covering: jewellery type (ring/pendant/bracelet/earring/etc.), metal colour and quality if visible (yellow gold/white gold/rose gold/platinum/silver), setting style (prong/bezel/pavé/channel/flush/tension/halo/cluster/etc.), stone types and colours, approximate stone sizes or carat weight if visible, estimated metal weight range if inferable, dimensions or proportions (band width, overall size, height), design style (solitaire/three-stone/eternity/cocktail/vintage/minimalist/bold/geometric/floral/filigree/etc.), surface finish (polished/matte/hammered/engraved), any stampings or hallmarks visible, and any other distinctive features>",
-  "tags": ["<8-15 short searchable tags — include jewellery type, metal colour, setting style, stone type, design style, finish, and any notable techniques like 'filigree', 'milgrain', 'rhodium plated', 'hand engraved', etc.>"],
-  "group": "<classify the design style into exactly one of: Bridal | Hip-hop | Cuban. Bridal = delicate, floral, romantic, engagement/wedding pieces. Hip-hop = bold, iced-out, statement pieces with heavy stone coverage. Cuban = link chains, thick metal, street/luxury aesthetic. Pick the closest match.>",
-  "category": "<jewellery type as exactly one of: Ring | Pendant | Bracelet | Earring | Necklace | Bangle | Chain | Brooch | Anklet | Other>"
-}
 If a measurement, weight, or dimension is clearly visible or can be reasonably estimated from the image, include it.
 If a detail is not visible, omit it rather than guess.`;
+
+const visionResponseSchema = {
+    type: SchemaType.OBJECT,
+    properties: {
+        description: { type: SchemaType.STRING },
+        tags: {
+            type: SchemaType.ARRAY,
+            items: { type: SchemaType.STRING },
+            description: '8-15 short searchable tags — include jewellery type, metal colour, setting style, stone type, design style, finish, and any notable techniques',
+        },
+        group: {
+            type: SchemaType.STRING,
+            enum: ['Bridal', 'Hip-hop', 'Cuban'],
+            description: 'Bridal = delicate, floral, romantic, engagement/wedding pieces. Hip-hop = bold, iced-out, statement pieces. Cuban = link chains, thick metal, street/luxury aesthetic.',
+        },
+        category: {
+            type: SchemaType.STRING,
+            enum: ['Ring', 'Pendant', 'Bracelet', 'Earring', 'Necklace', 'Bangle', 'Chain', 'Brooch', 'Anklet', 'Other'],
+        },
+    },
+    required: ['description', 'tags', 'group', 'category'],
+};
+
+const visionModel = genAI.getGenerativeModel({
+    model: process.env.GEMINI_VISION_MODEL || 'gemini-3.6-flash',
+    systemInstruction: VISION_PROMPT,
+});
 
 // Tolerates markdown-fenced JSON or surrounding prose; returns null on failure.
 const safeParseJson = (raw) => {
@@ -27,7 +56,7 @@ const safeParseJson = (raw) => {
 };
 
 /**
- * Describe an image with GPT-4o vision and embed the description.
+ * Describe an image with Gemini vision and embed the description.
  * Returns null if the file isn't an image.
  *
  * @param {{ s3Key: string, mimetype?: string }} input
@@ -36,53 +65,59 @@ const safeParseJson = (raw) => {
 exports.describeAndEmbedImage = async ({ s3Key, mimetype }) => {
     if (mimetype && !mimetype.startsWith('image/')) return null;
 
-    const url = await generatePresignedUrl(s3Key, 'inline');
+    // Fetch image from S3
+    const bucket = process.env.AWS_BUCKET_NAME;
+    const getObj = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: s3Key }));
+    const chunks = [];
+    for await (const chunk of getObj.Body) chunks.push(chunk);
+    const base64 = Buffer.concat(chunks).toString('base64');
 
-    const visionRes = await openai.chat.completions.create({
-        model: process.env.OPENAI_VISION_MODEL || 'gpt-4o',
-        response_format: { type: 'json_object' },
-        messages: [
-            {
+    // Step 1: Embedding first (separate quota from generateContent — gemini-embedding-2 REST API)
+    console.log(`[embedding] Generating embedding for ${s3Key}`);
+    let embedding = null;
+    try {
+        embedding = await generateEmbedding(Buffer.concat(chunks), mimetype);
+        console.log(`[embedding] Done for ${s3Key} (dimensions: ${embedding.length})`);
+    } catch (err) {
+        console.error(`[embedding] Failed for ${s3Key}:`, err.message);
+        return null;
+    }
+
+    // Step 2: Vision description (optional metadata — best-effort, separate quota)
+    let description = '', tags = [], group = '', category = '';
+    try {
+        const visionRes = await visionModel.generateContent({
+            contents: [{
                 role: 'user',
-                content: [
-                    { type: 'text', text: VISION_PROMPT },
-                    { type: 'image_url', image_url: { url } },
+                parts: [
+                    { text: 'Analyze this jewelry reference image.' },
+                    { inlineData: { mimeType: mimetype || 'image/jpeg', data: base64 } },
                 ],
-            },
-        ],
-    });
-
-    const message = visionRes.choices?.[0]?.message;
-    const rawContent = message?.content ?? '';
-
-    if (message?.refusal) {
-        console.warn(`[vision] model refused for ${s3Key}: ${message.refusal}`);
-        return null;
+            }],
+            generationConfig: { temperature: 0, responseMimeType: 'application/json', responseSchema: visionResponseSchema },
+        });
+        const rawContent = visionRes.response.text();
+        const parsed = safeParseJson(rawContent);
+        if (parsed) {
+            description = String(parsed.description || '').trim();
+            tags = Array.isArray(parsed.tags) ? parsed.tags.map(String) : [];
+            group = String(parsed.group || '').trim();
+            category = String(parsed.category || '').trim();
+        }
+    } catch (err) {
+        console.warn(`[vision] Skipped for ${s3Key} (quota likely exceeded):`, err.message);
     }
 
-    const parsed = safeParseJson(rawContent);
-    if (!parsed) {
-        console.warn(`[vision] non-JSON response for ${s3Key}. Raw: ${rawContent.slice(0, 500)}`);
-        return null;
+    // Step 3: Text embedding from description (best-effort)
+    let textEmbedding = null;
+    if (description) {
+        try {
+            textEmbedding = await generateTextEmbedding(description);
+            console.log(`[embedding] Text embedding done for ${s3Key} (dims: ${textEmbedding.length})`);
+        } catch (err) {
+            console.warn(`[embedding] Text embedding failed for ${s3Key}:`, err.message);
+        }
     }
 
-    const description = String(parsed.description || '').trim();
-    const tags        = Array.isArray(parsed.tags) ? parsed.tags.map(String) : [];
-    const group       = String(parsed.group    || '').trim();
-    const category    = String(parsed.category || '').trim();
-
-    if (!description) return null;
-
-    const embedRes = await openai.embeddings.create({
-        model: process.env.OPENAI_EMBED_MODEL || 'text-embedding-3-small',
-        input: description,
-    });
-
-    return {
-        description,
-        tags,
-        embedding: embedRes.data[0].embedding,
-        group,
-        category,
-    };
+    return { description, tags, embedding, group, category, textEmbedding };
 };

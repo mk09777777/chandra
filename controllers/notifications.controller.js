@@ -25,6 +25,33 @@ exports.getAll = async (req, res) => {
 };
 
 /**
+ * GET /api/notifications/escalations
+ * Get the logged-in user's escalation alerts (for the escalation dashboard).
+ */
+exports.getEscalations = async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit, 10) || 50, 100);
+    const notifications = await notificationService.getEscalationNotifications(req.user._id, limit);
+    res.status(200).json(notifications);
+  } catch (error) {
+    res.status(500).json({ error: 'Server error' });
+  }
+};
+
+/**
+ * GET /api/notifications/escalations/unread-count
+ * Unread escalation count for the badge.
+ */
+exports.getEscalationUnreadCount = async (req, res) => {
+  try {
+    const count = await notificationService.getUnreadEscalationCount(req.user._id);
+    res.status(200).json({ count });
+  } catch (error) {
+    res.status(500).json({ error: 'Server error' });
+  }
+};
+
+/**
  * GET /api/notifications/unread-count
  * Get the unread notification count for the badge.
  */

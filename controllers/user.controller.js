@@ -1,22 +1,24 @@
 const service = require('../services/user.service');
 
 const toUserDto = (user) => ({
-    Id:       user._id,
-    Name:     user.name,
-    Role:     user.role,
-    Skills:   user.skills,
-    email:    user.email,
-    phone:    user.phone,
-    clientId: user.clientId,
-    Group:    user.group,
+    Id:             user._id,
+    Name:           user.name,
+    Role:           user.role,
+    Skills:         user.skills,
+    email:          user.email,
+    phone:          user.phone,
+    clientId:       user.clientId,
+    clientsHandled: user.clientsHandled || [],
+    Group:          user.group,
 });
 
 const toUserListDto = (user) => ({
-    Id:     user._id,
-    Name:   user.name,
-    Role:   user.role,
-    Skills: user.skills,
-    Group:  user.group,
+    Id:             user._id,
+    Name:           user.name,
+    Role:           user.role,
+    Skills:         user.skills,
+    Group:          user.group,
+    clientsHandled: user.clientsHandled || [],
 });
 
 exports.getUsers = async (req, res) => {
@@ -40,11 +42,11 @@ exports.getUserById = async (req, res) => {
 
 exports.createUser = async (req, res) => {
     try {
-        const { name, email, phone, role, password, clientId, skills, group } = req.body;
+        const { name, email, phone, role, password, clientId, clientsHandled, skills, group } = req.body;
         if (!name || !email || !role || !password) {
             return res.status(400).json({ message: 'name, email, role and password are required' });
         }
-        const user = await service.createUser({ name, email, phone, role, password, clientId, skills, group });
+        const user = await service.createUser({ name, email, phone, role, password, clientId, clientsHandled, skills, group });
         res.status(201).json(toUserDto(user));
     } catch (err) {
         if (err.code === 11000) {

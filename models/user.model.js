@@ -7,6 +7,7 @@ const userSchema = new mongoose.Schema({
     role: {type: Number, required: true},
     password: {type: String, required: true},
     clientId: { type: String, ref: 'Client' },
+    clientsHandled: [{ type: String, ref: 'Client' }],
     pushTokens: [{ type: String }],
     skills: { type: String },
     group: { type: String, enum: ['Bridal', 'Hip-hop', 'Cuban'] }

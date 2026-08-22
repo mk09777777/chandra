@@ -1,17 +1,16 @@
-const OpenAI = require('openai');
+const { GoogleGenerativeAI, SchemaType } = require('@google/generative-ai');
 const userService = require('./user.service');
 const codelistsService = require('./codelists.service');
 const notificationService = require('./notifications.service');
 const repo = require('../repositories/enquiry.repo');
 const { describeAndEmbedImage } = require('./imageDescribe.service');
-const { indexDesign, findSimilar } = require('./designSimilarity.service');
+const { findSimilar } = require('./designSimilarity.service');
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 const STATUS_TO_ROLE_CODE = {
     'Coral': 'CO',
-    'Cad': 'CD',
-    'Approved Cad': 'CD',
+    'Cad': 'CD'
 };
 
 async function resolveRoleId(roleCode) {
@@ -39,25 +38,36 @@ async function rankDesigner({ designers, referenceTags, referenceDescription, en
         enquiryMeta,
     };
 
-    const res = await openai.chat.completions.create({
-        model: process.env.OPENAI_RANK_MODEL || 'gpt-4o-mini',
-        response_format: { type: 'json_object' },
-        messages: [
-            {
-                role: 'system',
-                content: `You are matching a jewellery enquiry to the best designer.
+    const rankSchema = {
+        type: SchemaType.OBJECT,
+        properties: {
+            chosenId: { type: SchemaType.STRING },
+            reason: { type: SchemaType.STRING },
+        },
+        required: ['chosenId', 'reason'],
+    };
+
+    const rankModel = genAI.getGenerativeModel({
+        model: process.env.GEMINI_RANK_MODEL || 'gemini-3.6-flash',
+        systemInstruction: `You are matching a jewellery enquiry to the best designer.
 Consider both skill match AND current workload (activeEnquiries).
 Prefer a designer with strong matching skills and a lower workload.
 IF THE SKILLS ARE EQUALLY MATCHED, prefer the designer with fewer active enquiries, IF NOT THEN THE ONE WITH THE SKILL WILL BE CHOSEN. Do not return the designer with the lowest workload if they have no relevant skills.
 Return ONLY a JSON object: { "chosenId": "<designer id>", "reason": "<short reason>" }.
 If skills are sparse or absent, pick the designer with the fewest active enquiries.`,
-            },
-            { role: 'user', content: JSON.stringify(payload) },
-        ],
+    });
+
+    const res = await rankModel.generateContent({
+        contents: [{ role: 'user', parts: [{ text: JSON.stringify(payload) }] }],
+        generationConfig: {
+            temperature: 0,
+            responseMimeType: 'application/json',
+            responseSchema: rankSchema,
+        },
     });
 
     try {
-        const parsed = JSON.parse(res.choices[0].message.content);
+        const parsed = JSON.parse(res.response.text());
         const chosen = String(parsed.chosenId || '');
         if (designers.some(d => String(d._id) === chosen)) return chosen;
     } catch {
@@ -130,35 +140,10 @@ exports.autoAssignDesigner = async ({ enquiry, referenceDescription, referenceTa
  * Best-effort — every block try/catches.
  */
 exports.postEnquiryCreateHook = async (enquiry) => {
-    console.log(`[post-create] Running post-create hook for enquiry ${enquiry._id} with ${enquiry.ReferenceImages?.length || 0} reference images`);
+
     const refs = enquiry.ReferenceImages || [];
     const enriched = [];
 
-    for (const ref of refs) {
-        try {
-            const result = await describeAndEmbedImage({ s3Key: ref.Key, mimetype: ref.MimeType });
-            if (!result) continue;
-            enriched.push(result);
-
-            try {
-                await indexDesign({
-                    enquiryId: enquiry._id,
-                    type: 'reference',
-                    version: null,
-                    key: ref.Key,
-                    description: result.description,
-                    tags: result.tags,
-                    embedding: result.embedding,
-                });
-            } catch (err) {
-                console.error('[post-create] indexDesign failed for ref', ref.Key, err);
-            }
-        } catch (err) {
-            console.error('[post-create] describeAndEmbedImage failed for ref', ref.Key, err);
-        }
-    }
-
-    // Infer category from images if not already set
     if (enriched.length > 0 && !enquiry.Category) {
         const votes = enriched.map(e => e.category).filter(Boolean);
         if (votes.length > 0) {
@@ -174,7 +159,6 @@ exports.postEnquiryCreateHook = async (enquiry) => {
         }
     }
 
-    // Auto-assign always runs, image data enriches it when available
     try {
         const combinedDescription = enriched.map(e => e.description).join('\n\n');
         const combinedTags = [...new Set(enriched.flatMap(e => e.tags))];
@@ -209,10 +193,9 @@ exports.postEnquiryCreateHook = async (enquiry) => {
         console.error('[post-create] autoAssignDesigner failed:', err);
     }
 
-    // Find similar past designs — only possible when embeddings exist
     if (enriched.length === 0) return;
     try {
-        const seen = new Map(); // EnquiryId -> match
+        const seen = new Map();
         for (const e of enriched) {
             const matches = await findSimilar({
                 embedding: e.embedding,
@@ -220,7 +203,7 @@ exports.postEnquiryCreateHook = async (enquiry) => {
                 excludeEnquiryId: enquiry._id,
             });
             for (const m of matches) {
-                const key = String(m.EnquiryId);
+                const key = String(m._id);
                 const prev = seen.get(key);
                 if (!prev || m.score > prev.score) seen.set(key, m);
             }

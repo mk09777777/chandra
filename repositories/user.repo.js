@@ -33,6 +33,12 @@ exports.getUsersByClient = async (clientId) => {
   return users.map(u => u._id);
 };
 
+// Client Handlers (role 5) responsible for a given client — matched via their clientsHandled list.
+exports.getClientHandlersForClient = async (clientId) => {
+  const users = await User.find({ role: 5, clientsHandled: clientId }).select('_id');
+  return users.map(u => u._id);
+};
+
 exports.savePushToken = async (userId, token) => {
   if (!userId) {
     throw new Error('User ID is required');

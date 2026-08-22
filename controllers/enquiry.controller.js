@@ -54,8 +54,17 @@ exports.createEnquiry = async (req, res) => {
                 return res.status(400).json({ message: "Invalid JSON in 'data' field" });
             }
         }
+        let referenceImageDescriptions = [];
+        if (typeof req.body?.referenceImageDescriptions === 'string') {
+            try {
+                referenceImageDescriptions = JSON.parse(req.body.referenceImageDescriptions);
+            } catch {
+                return res.status(400).json({ message: "Invalid JSON in 'referenceImageDescriptions' field" });
+            }
+        }
+
         const files = req.files?.referenceImages || [];
-        const enquiry = await service.createEnquiry(data, files, userId);
+        const enquiry = await service.createEnquiry(data, files, userId, referenceImageDescriptions);
         res.status(201).json(enquiry);
     } catch (error) {
         console.error("Error creating enquiry:", error);
@@ -93,9 +102,12 @@ exports.uploadAssets = async (req, res) => {
     const version = req.body.version;
     const userId = req.user._id;
     const code = req.body.code; // CadCode or CoralCode
+    const cost = req.body.cost; // Optional numeric cost for this Coral / Cad version
+    const isFinalVersion = req.body.isFinalVersion === true; // Flag for Final CAD upload
+    const isOnlyMetalDesign = req.body.isOnlyMetalDesign === true;
 
     try {
-      const result = await service.handleAssetUpload(id, type, files, version, code, userId);
+      const result = await service.handleAssetUpload(id, type, files, version, code, userId, cost, isFinalVersion, isOnlyMetalDesign);
       res.status(200).json({ message: 'Upload successful', data: result });
     } catch (err) {
       console.error(err);
@@ -140,12 +152,11 @@ exports.getPresignedFileUrl = async (req, res) => {
 
 exports.getPricing = async (req, res) => {
     try {
-        const detailsJson = req.body.details;
+        const { details: detailsJson, clientId, isRecalculate = false, isOnlyMetalDesign = false } = req.body;
         if (!detailsJson) {
             return res.status(400).json({ message: "Details parameter is required" });
         }
-        const clientId = req.body.clientId;
-        const pricing = await service.calculatePricing(detailsJson, clientId);
+        const pricing = await service.calculatePricing(detailsJson, clientId, isOnlyMetalDesign, isRecalculate);
         res.json(pricing);
     } catch (error) {
         console.error("Error calculating pricing:", error);
@@ -156,7 +167,7 @@ exports.getPricing = async (req, res) => {
 exports.getAggregatedCounts = async (req, res) => {
     try {
         // Pass the entire query object (e.g., { groupBy: 'status', assignedTo: 'xyz' })
-        const results = await service.getAggregatedCounts(req.query);
+        const results = await service.getAggregatedCounts(req.query, req.user._id);
         res.json(results);
 
     } catch (error) {
@@ -174,7 +185,7 @@ exports.getAggregatedCounts = async (req, res) => {
 exports.searchEnquiries = async (req, res) => {
     try {
         // Pass all UI query params (e.g., ?search=...&status=...&page=1)
-        const results = await service.searchEnquiries(req.query); 
+        const results = await service.searchEnquiries(req.query, req.user._id);
         res.json(results);
     } catch (error) {
         console.error("Error searching enquiries:", error);
@@ -212,7 +223,7 @@ exports.massActionEnquiries = async (req, res) => {
 exports.exportEnquiriesPdf = async (req, res) => {
     try {
         // Reuse same filters/sort from UI (req.query or req.body — your choice)
-        const pdfBuffer = await service.exportEnquiriesPdf(req.query);
+        const pdfBuffer = await service.exportEnquiriesPdf(req.query, req.user._id);
 
         res.setHeader("Content-Type", "application/pdf");
         res.setHeader(

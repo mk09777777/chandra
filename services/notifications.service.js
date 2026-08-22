@@ -14,6 +14,22 @@ exports.getUserNotifications = async (userId, limit = 50) => {
 };
 
 /**
+ * Get a user's escalation alerts (Type='escalation'), newest first — backs the escalation dashboard.
+ */
+exports.getEscalationNotifications = async (userId, limit = 50) => {
+  const query = { User: userId, Type: 'escalation' };
+  return repo.find(query, { createdAt: -1 }, limit);
+};
+
+/**
+ * Unread escalation-alert count for the current user (badge).
+ */
+exports.getUnreadEscalationCount = async (userId) => {
+  const query = { User: userId, Type: 'escalation', Read: false };
+  return repo.count(query);
+};
+
+/**
  * Get the unread notification count for a user.
  * (Uses repo.count)
  */

@@ -9,29 +9,101 @@ const xlsx = require('xlsx');
 const codelistsService = require('../services/codelists.service');
 const notificationService = require('../services/notifications.service');
 const reportsService = require('../services/reports.service');
+const userScope = require('./userScope.service');
 const { calculatePricing: pricingCalculate } = require('./pricing.service');
+const { extractPricingDataFromImage } = require('./imagePricing.service');
+const { normalizeShape } = require('../utils/shapes');
+const { deriveSubStatus, isValidPair, appendStatusEntry } = require('../utils/enquiryStatus');
+const { insertDesign } = require('./designs.service');
+
+// 'Quotation Review' only when pricing is complete; else 'Cost Missing'.
+function deriveCostSubStatus(asset) {
+    const p = Array.isArray(asset?.Pricing) ? asset.Pricing[0] : null;
+    if (!p) return 'Cost Missing';
+    const stones = p.Stones || [];
+    const stonesPriced = asset.IsOnlyMetalDesign ? true : (stones.length > 0 && stones.every(s => Number(s.Price) > 0));
+    const metalPriced = Number(p.MetalPrice) > 0;
+    return (stonesPriced && metalPriced) ? 'Quotation Review' : 'Cost Missing';
+}
+
+async function scopeClientFilter(queryParams, userId) {
+    // Strip the control flag up front so it can never leak into DB filters.
+    const { allClients, ...params } = queryParams;
+    const override = allClients === true || allClients === 'true';
+
+    const scope = await userScope.getEnquiryScope(userId);
+
+    // Client Handler explicitly overriding their scope (e.g. covering for an absent colleague):
+    // behave exactly like an unscoped user — honor a specific requested clientId, else no client filter.
+    if (scope && override) {
+        return params;
+    }
+
+    const clientFilter = userScope.applyClientScope(params.clientId, scope);
+    const finalParams = { ...params, ...clientFilter };
+    if (clientFilter.clientIds !== undefined) delete finalParams.clientId;
+    return finalParams;
+}
 
 // Best-effort: describe + embed each newly-uploaded image and store in DesignEmbedding.
 // Failures are logged and swallowed — never break the upload path.
-async function indexUploadedAssets({ enquiryId, type, version, uploads }) {
-    const { describeAndEmbedImage } = require('./imageDescribe.service');
-    const { indexDesign } = require('./designSimilarity.service');
+async function indexUploadedAssets({ enquiryId, type, version, uploads, stones, metal, isOnlyMetalDesign }) {
+    const designType = type === 'cad' ? 'cad' : type;
+    const hasStones = stones && stones.length > 0;
+
     for (const u of uploads) {
         try {
-            const result = await describeAndEmbedImage({ s3Key: u.key, mimetype: u.mimetype });
-            if (!result) continue;
-            await indexDesign({
+            if (!hasStones && !isOnlyMetalDesign) {
+                console.warn(`[indexUploadedAssets] skipping design insertion for ${type} key ${u.key}: no stones and not an only-metal design`);
+                continue;
+            }
+            await insertDesign({
+                designType,
                 enquiryId,
-                type,
-                version,
-                key: u.key,
-                description: result.description,
-                tags: result.tags,
-                embedding: result.embedding,
+                s3Key: u.key,
+                mimeType: u.mimetype,
+                stones: stones || [],
+                metal: metal || null,
+                indexEmbedding: true,
+                isOnlyMetalDesign: isOnlyMetalDesign || false,
+                version: version || null,
             });
         } catch (err) {
             console.error(`[indexUploadedAssets] failed for ${type} key ${u.key}:`, err);
         }
+    }
+}
+
+// Best-effort: regenerate the manufacturing checklist for an enquiry from its remarks via Gemini.
+// Failures are logged and swallowed — never block the calling write path.
+async function regenerateChecklist(enquiryId) {
+    try {
+        const enquiry = await repo.getEnquiryById(enquiryId);
+        if (!enquiry) return;
+        const { extractChecklist } = require('./checklistExtraction.service');
+        const checklist = await extractChecklist({
+            remarks: enquiry.Remarks,
+            specialRemarks: enquiry.SpecialRemarks,
+        });
+        if (!checklist) return;
+        await repo.updateChecklist(enquiryId, checklist);
+    } catch (err) {
+        console.error(`[regenerateChecklist] failed for enquiry ${enquiryId}:`, err);
+    }
+}
+
+// Best-effort: regenerate the designer-facing markdown summary from the full enquiry via Gemini.
+// Failures are logged and swallowed — never block the calling write path.
+async function regenerateSummary(enquiryId) {
+    try {
+        const enquiry = await repo.getEnquiryById(enquiryId);
+        if (!enquiry) return;
+        const { generateSummary } = require('./summaryGeneration.service');
+        const summary = await generateSummary(enquiry);
+        if (!summary) return;
+        await repo.updateSummary(enquiryId, summary);
+    } catch (err) {
+        console.error(`[regenerateSummary] failed for enquiry ${enquiryId}:`, err);
     }
 }
 
@@ -55,18 +127,19 @@ exports.getEnquiriesByUserId = async (userId) => {
     return await repo.getEnquiriesByUserId(userId);
 };
 
-exports.createEnquiry = async (data, files = [], userId) => {
+exports.createEnquiry = async (data, files = [], userId, referenceImageDescriptions = []) => {
     const { AssignedTo, Status, ...rest } = data;
 
     // Upload reference images to S3 if provided
     const ReferenceImages = [];
-    for (const file of files) {
+    for (const [index, file] of files.entries()) {
         try {
             const key = await uploadToS3(file);
+            const description = referenceImageDescriptions[index] || file.originalname;
             ReferenceImages.push({
                 Id: uuidv4(),
                 Key: key,
-                Description: file.originalname,
+                Description: description,
                 MimeType: file.mimetype,
             });
         } catch (err) {
@@ -78,6 +151,7 @@ exports.createEnquiry = async (data, files = [], userId) => {
     const StatusHistory = [
         {
             Status: 'Enquiry Created',
+            SubStatus: null,
             Timestamp: new Date(),
             AddedBy: userId || 'System'
         }
@@ -86,6 +160,7 @@ exports.createEnquiry = async (data, files = [], userId) => {
     if (AssignedTo || Status !== 'Enquiry Created') {
         StatusHistory.push({
             Status: Status,
+            SubStatus: deriveSubStatus(Status, { assignedTo: AssignedTo }),
             Timestamp: new Date(),
             AssignedTo: AssignedTo || null,
             AddedBy: userId || 'System'
@@ -114,11 +189,11 @@ exports.createEnquiry = async (data, files = [], userId) => {
 
         // Admin notifications
         await notificationService.createAlertsForUsers(
-            adminIds, // 1. The array of user IDs
-            '🆕 New Enquiry Created', // 2. The title
-            `New enquiry "${enquiry.Name}" has been created.`, // 3. The body
-            'enquiry_created', // 4. The type
-            enquiryLink // 5. The in-app link (proper format: /enquiries/{id})
+            adminIds,
+            'New Enquiry Created',
+            `New enquiry "${enquiry.Name}" has been created.`,
+            'enquiry_created',
+            enquiryLink
         );
 
         // Designer notification (if assigned)
@@ -132,12 +207,7 @@ exports.createEnquiry = async (data, files = [], userId) => {
             );
         }
 
-        console.log(
-            `📲 Sent enquiry creation notifications: ${adminIds.length} admins, ${designerId ? 1 : 0
-            } designer`
-        );
     } catch (err) {
-        console.error('❌ Error sending enquiry creation notifications:', err);
     }
 
     // Fire-and-forget: image embedding, auto-assign designer, similar-design search.
@@ -149,22 +219,21 @@ exports.createEnquiry = async (data, files = [], userId) => {
     //     );
     // });
 
+    queueMicrotask(() => regenerateChecklist(enquiry._id));
+    // queueMicrotask(() => regenerateSummary(enquiry._id));
+
     return enquiry._id;
 };
 
 exports.deleteEnquiry = async (id) => {
     try {
-        // 1️⃣ Delete the enquiry
-        console.log(`Deleting enquiry ${id}...`);
         const deleted = await repo.deleteEnquiry(id);
         if (!deleted) {
             throw new Error('Enquiry not found');
         }
 
-        // 2️⃣ Delete all related messages
         await chatService.deleteChatsByEnquiryId(id);
 
-        // 3️⃣ Return the deleted enquiry
         return deleted;
     } catch (err) {
         throw new Error('Error deleting enquiry: ' + err.message);
@@ -181,8 +250,8 @@ exports.updateEnquiry = async (id, data, userId) => {
         'Name', 'Quantity', 'StyleNumber', 'ClientId',
         'Priority', 'Metal', 'Category', 'StoneType',
         'MetalWeight', 'DiamondWeight', 'Stamping',
-        'Remarks', 'ShippingDate', 'Budget', 'SpecialRemarks', 
-        'ApprovedDate', 'GatiOrderNumber'
+        'Remarks', 'ShippingDate', 'Budget', 'SpecialRemarks',
+        'ApprovedDate', 'GatiOrderNumber', 'Checklist'
     ];
 
     const updatedFields = {};
@@ -198,16 +267,28 @@ exports.updateEnquiry = async (id, data, userId) => {
         }
     }
 
-    let oldStatusHistory = enquiry.StatusHistory.at(-1);
-    if (oldStatusHistory.Status != data.Status) {
-        changes.push(`Status: from "${oldStatusHistory.Status}" to "${data.Status}"`);
-        if(data.Status === 'Order Placement'){
-            //TODO add changes here for approved date, style number auto generation, PO creation 
+    const oldStatusHistory = enquiry.StatusHistory.at(-1);
+    const currentStatus = oldStatusHistory?.Status;
+    const currentAssignee = oldStatusHistory?.AssignedTo ?? null;
+
+    // Resolve the effective assignee once — carry the current one forward when AssignedTo isn't sent,
+    // so SubStatus is always computed against the right person (and a status change never silently unassigns).
+    const sentAssignee = Object.prototype.hasOwnProperty.call(data, 'AssignedTo');
+    const effectiveAssignee = sentAssignee ? data.AssignedTo : currentAssignee;
+
+    // Status is only "changed" when the client actually sends a different value (admin override).
+    const statusOverride = data.Status !== undefined && data.Status !== null && data.Status !== currentStatus;
+    if (statusOverride) {
+        changes.push(`Status: from "${currentStatus}" to "${data.Status}"`);
+        if (data.Status === 'Order Placement') {
+            //TODO add changes here for approved date, style number auto generation, PO creation
             updatedFields.ApprovedDate = new Date();
         }
     }
-    if (oldStatusHistory.AssignedTo != data.AssignedTo) {
-        let oldAssignee = await userService.getUserById(oldStatusHistory.AssignedTo);
+
+    const assigneeChanged = sentAssignee && String(data.AssignedTo ?? '') !== String(currentAssignee ?? '');
+    if (assigneeChanged) {
+        let oldAssignee = await userService.getUserById(currentAssignee);
         let newAssignee = await userService.getUserById(data.AssignedTo);
         changes.push(`Assigned: from "${oldAssignee?.name}" to "${newAssignee?.name}"`);
 
@@ -237,7 +318,7 @@ exports.updateEnquiry = async (id, data, userId) => {
     }
 
     // 2️⃣ Client changed
-    if (enquiry.ClientId != data.ClientId) {
+    if (Object.prototype.hasOwnProperty.call(data, 'ClientId') && enquiry.ClientId != data.ClientId) {
         const adminRoleId = (await codelistsService.getCodelistByName("Roles"))
             ?.find(role => role.Code === "AD")?.Id;
         const adminIds = await userService.getUsersByRole(adminRoleId);
@@ -250,44 +331,60 @@ exports.updateEnquiry = async (id, data, userId) => {
     }
 
     if (changes.length > 0) {
-        const statusEntry = {
-            Status: data.Status,
-            Timestamp: new Date(),
-            AssignedTo: data.AssignedTo,
-            AddedBy: userId || 'System',
-            Details: changes.join(', ')
-        };
+        const details = changes.join(', ');
 
-        enquiry.StatusHistory.push(statusEntry);
+        if (statusOverride) {
+            // Admin override. SubStatus is optional: explicit values are validated; otherwise the
+            // assignment-based sub-status is derived from the effective assignee.
+            let subStatus;
+            if (data.SubStatus !== undefined) {
+                if (!isValidPair(data.Status, data.SubStatus)) {
+                    throw Object.assign(new Error(`Invalid Status/SubStatus pair: "${data.Status}" / "${data.SubStatus}"`), { status: 400 });
+                }
+                subStatus = data.SubStatus;
+            } else {
+                subStatus = deriveSubStatus(data.Status, { assignedTo: effectiveAssignee });
+            }
+            appendStatusEntry(enquiry, { status: data.Status, subStatus, assignedTo: effectiveAssignee, addedBy: userId, details });
+        } else if (assigneeChanged) {
+            // Reassignment within the current status — derive Assigned / Assign Pending.
+            appendStatusEntry(enquiry, {
+                status: currentStatus,
+                subStatus: deriveSubStatus(currentStatus, { assignedTo: effectiveAssignee }),
+                assignedTo: effectiveAssignee,
+                addedBy: userId,
+                details,
+            });
+        } else {
+            // Pure data edit — audit entry that preserves the current Status + SubStatus (no transition).
+            appendStatusEntry(enquiry, {
+                status: currentStatus,
+                subStatus: oldStatusHistory?.SubStatus ?? null,
+                assignedTo: currentAssignee,
+                addedBy: userId,
+                details,
+            });
+        }
+
         Object.assign(enquiry, updatedFields);
         await repo.updateEnquiry(id, enquiry);
 
         // 3️⃣ 🔔 Send notifications for enquiry update
         try {
-            console.log(`[ENQUIRY UPDATE] Starting notification process for enquiry ${id}...`);
-            console.log(`[ENQUIRY UPDATE] Changes detected: ${changes.length} change(s)`);
-
-            // Get users to notify: admins and assigned user (if any)
             const adminRoleId = (await codelistsService.getCodelistByName("Roles"))
                 ?.find(role => role.Code === "AD")?.Id;
             const adminIds = await userService.getUsersByRole(adminRoleId);
             
-            // Build list of users to notify
             const usersToNotify = [...adminIds];
             
-            // Add assigned user if exists
             const assignedTo = data.AssignedTo || enquiry.StatusHistory?.at(-1)?.AssignedTo;
             if (assignedTo) {
-                // Convert to string if needed and avoid duplicates
                 const assignedToStr = assignedTo.toString();
                 if (!usersToNotify.some(id => id.toString() === assignedToStr)) {
                     usersToNotify.push(assignedTo);
                 }
             }
 
-            // Exclude the user who made the update (they don't need to be notified)
-            // EXCEPTION: If the user is assigned to the enquiry, they should still be notified
-            // (useful for testing and when assigned users update their own enquiries)
             const updatingUserIdStr = userId ? userId.toString() : '';
             const assignedToStr = assignedTo ? assignedTo.toString() : '';
             const isUpdatingUserAssigned = updatingUserIdStr === assignedToStr;
@@ -295,32 +392,22 @@ exports.updateEnquiry = async (id, data, userId) => {
             const usersToNotifyFiltered = usersToNotify.filter(
                 notifyUserId => {
                     const notifyUserIdStr = notifyUserId.toString();
-                    // Don't exclude if user is assigned to the enquiry (they should know about updates)
                     if (notifyUserIdStr === updatingUserIdStr && isUpdatingUserAssigned) {
-                        return true; // Include assigned user even if they made the update
+                        return true;
                     }
-                    return notifyUserIdStr !== updatingUserIdStr; // Otherwise exclude the updating user
+                    return notifyUserIdStr !== updatingUserIdStr;
                 }
             );
 
-            console.log(`[ENQUIRY UPDATE] Users to notify: ${usersToNotifyFiltered.length} user(s)`);
-            console.log(`[ENQUIRY UPDATE] User IDs:, usersToNotifyFiltered.map(id => id.toString())`);
-            console.log(`[ENQUIRY UPDATE] User who made update: ${updatingUserIdStr || '(none)'}`);
-            console.log(`[ENQUIRY UPDATE] Assigned user: ${assignedTo ? assignedTo.toString() : '(none)'}`);
-            console.log(`[ENQUIRY UPDATE] Admin count: ${adminIds.length}`);
-
             if (usersToNotifyFiltered.length > 0) {
-                // Build notification message based on what changed
-                let notificationTitle = '🔄 Enquiry Updated';
+                let notificationTitle = 'Enquiry Updated';
                 let notificationBody = `Enquiry "${enquiry.Name}" has been updated.`;
 
-                // If status changed, make it more specific
-                if (oldStatusHistory.Status !== data.Status) {
-                    notificationTitle = `📊 Status Changed`;
+                if (statusOverride) {
+                    notificationTitle = `Status Changed`;
                     notificationBody = `Enquiry "${enquiry.Name}" status changed to "${data.Status}".`;
                 }
 
-                // Build proper link format (mobile app format - no leading slash)
                 const enquiryLink = `enquiries/${enquiry._id.toString()}`;
 
                 await notificationService.createAlertsForUsers(
@@ -330,32 +417,35 @@ exports.updateEnquiry = async (id, data, userId) => {
                     'enquiry_updated',
                     enquiryLink
                 );
-
-                console.log(`[ENQUIRY UPDATE] ✅ Notifications sent successfully to ${usersToNotifyFiltered.length} user(s)`);
-            } else {
-                console.log(`[ENQUIRY UPDATE] ⚠ No users to notify (all users excluded or none found)`);
             }
         } catch (err) {
-            console.error(`[ENQUIRY UPDATE] ❌ Error sending notifications for enquiry ${id}:`, err);
-            // Don't fail the update if notification fails
         }
     }
+
+    queueMicrotask(() => regenerateChecklist(enquiry._id));
+    // queueMicrotask(() => regenerateSummary(enquiry._id));
 
     return { _id: enquiry._id };
 };
 
-exports.handleAssetUpload = async (id, type, files, version, code, userId) => {
+exports.handleAssetUpload = async (id, type, files, version, code, userId, cost, isFinalVersion = false, isOnlyMetalDesign = false) => {
     const enquiry = await repo.getEnquiryById(id);
     if (!enquiry) throw new Error('Enquiry not found');
+
+    // Normalise cost: accept string ("123") or number, store as Number; null/undefined/empty -> undefined
+    const parsedCost = (cost === undefined || cost === null || cost === '') ? undefined : Number(cost);
+    if (parsedCost !== undefined && Number.isNaN(parsedCost)) {
+        throw new Error('cost must be a valid number');
+    }
 
     // 1) perform the upload with the right handler
     let uploadResult;
     switch (type) {
         case 'coral':
-            uploadResult = await handleCoralUpload(enquiry, files, version, code, userId);
+            uploadResult = await handleCoralUpload(enquiry, files, version, code, userId, parsedCost, isOnlyMetalDesign);
             break;
         case 'cad':
-            uploadResult = await handleCadUpload(enquiry, files, version, code, userId);
+            uploadResult = await handleCadUpload(enquiry, files, version, code, userId, parsedCost, isFinalVersion, isOnlyMetalDesign);
             break;
         case 'reference':
             uploadResult = await handleReferenceImageUpload(enquiry, files, userId);
@@ -398,15 +488,11 @@ exports.handleAssetUpload = async (id, type, files, version, code, userId) => {
                         link
                     );
                 } else {
-                    console.log('⚠ No admins to notify after excluding uploader.');
                 }
             }
         } else {
-            console.log('⚠ Admin role id not found, skipping admin notifications.');
         }
     } catch (err) {
-        console.error(`❌ Error notifying admins after asset upload for enquiry ${id}:`, err);
-        // don't fail the main flow — upload already completed
     }
 
     // 3) return upload result to caller
@@ -417,7 +503,6 @@ exports.handleAssetUpload = async (id, type, files, version, code, userId) => {
 exports.updateAssetData = async (enquiryId, type, version, data, userId) => {
     const enquiry = await repo.getEnquiryById(enquiryId);
     if (!enquiry) throw new Error('Enquiry not found');
-    let statusEntry = null;
     switch (type) {
         case 'coral':
             let coralIndex = enquiry.Coral.findIndex(a => a.Version === version);
@@ -427,53 +512,57 @@ exports.updateAssetData = async (enquiryId, type, version, data, userId) => {
                 if (data.IsApprovedVersion !== undefined && data.IsApprovedVersion !== null) {
                     updatedCoral.IsApprovedVersion = data.IsApprovedVersion;
                     if (data.IsApprovedVersion === true) {
-                        statusEntry = {
-                            Status: 'Approved Cad',
-                            Timestamp: new Date(),
-                            AssignedTo: null,
-                            AddedBy: userId || 'System',
-                            Details: "Coral Approved"
-                        };
-                    }
-                    else {
+                        // Coral approved → CAD phase begins; a designer must be assigned to make the CAD.
                         updatedCoral.ReasonForRejection = data.ReasonForRejection || "";
-                        statusEntry = {
-                            Status: 'Enquiry Created',
-                            Timestamp: new Date(),
-                            AssignedTo: enquiry.StatusHistory?.at(-1)?.AssignedTo,
-                            AddedBy: userId || 'System',
-                            Details: "Coral Rejected - " + data.ReasonForRejection ?? ""
-                        };
+                        appendStatusEntry(enquiry, {
+                            status: 'Cad',
+                            subStatus: deriveSubStatus('Cad', { assignedTo: null }),
+                            assignedTo: null,
+                            addedBy: userId,
+                            details: "Coral Approved - " + (data.ReasonForRejection ?? ""),
+                        });
+                    } else {
+                        updatedCoral.ReasonForRejection = data.ReasonForRejection || "";
+                        appendStatusEntry(enquiry, {
+                            status: 'Coral',
+                            subStatus: 'Rejected - Redo',
+                            addedBy: userId,
+                            details: "Coral Rejected - " + data.ReasonForRejection ?? "",
+                        });
                     }
-                    enquiry.StatusHistory.push(statusEntry);
                 }
 
                 if (data.Pricing !== undefined && data.Pricing !== null) {
                     updatedCoral.Pricing = data.Pricing;
-                    statusEntry = {
-                        Status: enquiry.StatusHistory?.at(-1)?.Status,
-                        Timestamp: new Date(),
-                        AssignedTo: enquiry.StatusHistory?.at(-1)?.AssignedTo,
-                        AddedBy: userId || 'System',
-                        Details: "Coral Pricing Updated"
-                    };
-                    enquiry.StatusHistory.push(statusEntry);
+                    appendStatusEntry(enquiry, {
+                        status: enquiry.StatusHistory?.at(-1)?.Status,
+                        subStatus: deriveCostSubStatus(updatedCoral),
+                        addedBy: userId,
+                        details: "Coral Pricing Updated",
+                    });
                 }
 
-                if (data.ShowToClient !== undefined && data.ShowToClient !== null) {
-                    updatedCoral.ShowToClient = data.ShowToClient;
-                    statusEntry = {
-                        Status: 'Design Approval Pending',
-                        Timestamp: new Date(),
-                        AssignedTo: enquiry.StatusHistory?.at(-1)?.AssignedTo,
-                        AddedBy: userId || 'System',
-                        Details: "Approval pending for coral" ?? ""
-                    };
-                    enquiry.StatusHistory.push(statusEntry);
+                if (data.SendForApproval === true) {
+                    appendStatusEntry(enquiry, {
+                        status: 'Design Approval Pending',
+                        subStatus: null,
+                        addedBy: userId,
+                        details: "Sent for design approval",
+                    });
                 }
 
                 if (data.CoralCode !== undefined && data.CoralCode !== null) {
                     updatedCoral.CoralCode = data.CoralCode;
+                }
+
+                if (data.Cost !== undefined && data.Cost !== null && data.Cost !== '') {
+                    const parsedCost = Number(data.Cost);
+                    if (Number.isNaN(parsedCost)) throw new Error('Cost must be a valid number');
+                    updatedCoral.Cost = parsedCost;
+                }
+
+                if (data.IsOnlyMetalDesign !== undefined && data.IsOnlyMetalDesign !== null) {
+                    updatedCoral.IsOnlyMetalDesign = data.IsOnlyMetalDesign;
                 }
 
                 if (data.Description && data.Id) {
@@ -492,14 +581,12 @@ exports.updateAssetData = async (enquiryId, type, version, data, userId) => {
                         //delete entire version
                         enquiry.Coral.splice(coralIndex, 1);
                         // Move status back to in progress because in 10 mins designer deleted it
-                        statusEntry = {
-                            Status: 'Coral',
-                            Timestamp: new Date(),
-                            AssignedTo: enquiry.StatusHistory?.at(-1)?.AssignedTo,
-                            AddedBy: userId || 'System',
-                            Details: "Coral Version Deleted"
-                        };
-                        enquiry.StatusHistory.push(statusEntry);
+                        appendStatusEntry(enquiry, {
+                            status: 'Coral',
+                            subStatus: 'Assigned',
+                            addedBy: userId,
+                            details: "Coral Version Deleted",
+                        });
                     }
                 }
 
@@ -517,57 +604,73 @@ exports.updateAssetData = async (enquiryId, type, version, data, userId) => {
             if (cadIndex !== -1) {
                 const updatedCad = enquiry.Cad[cadIndex];
 
+                // Step 1: Admin approves first CAD design → designer must upload Final CAD
+                if (data.IsApprovedVersion !== undefined && data.IsApprovedVersion !== null) {
+                    updatedCad.IsApprovedVersion = data.IsApprovedVersion;
+                    if (data.IsApprovedVersion === true) {
+                        updatedCad.ReasonForRejection = data.ReasonForRejection || "";
+                        appendStatusEntry(enquiry, {
+                            status: 'Cad',
+                            subStatus: 'Final Cad Upload',
+                            addedBy: userId,
+                            details: "Cad Design Approved - Final CAD required -" + (data.ReasonForRejection ?? ""),
+                        });
+                    } else {
+                        updatedCad.ReasonForRejection = data.ReasonForRejection || "";
+                        appendStatusEntry(enquiry, {
+                            status: 'Cad',
+                            subStatus: 'Rejected - Redo',
+                            addedBy: userId,
+                            details: "Cad Rejected - " + (data.ReasonForRejection ?? ""),
+                        });
+                    }
+                }
+
+                // Step 2: Designer marks uploaded CAD as the final version → Order Placement
                 if (data.IsFinalVersion !== undefined && data.IsFinalVersion !== null) {
                     updatedCad.IsFinalVersion = data.IsFinalVersion;
                     if (data.IsFinalVersion === true) {
-                        updatedCad.IsFinalVersion = data.IsFinalVersion;
-                        statusEntry = {
-                            Status: 'Approved Cad',
-                            Timestamp: new Date(),
-                            AssignedTo: null,
-                            AddedBy: userId || 'System',
-                            Details: "Cad Approved"
-                        };
+                        appendStatusEntry(enquiry, {
+                            status: 'Order Placement',
+                            subStatus: null,
+                            assignedTo: null,
+                            addedBy: userId,
+                            details: "Final Cad Approved",
+                        });
                     }
-                    else {
-                        updatedCad.ReasonForRejection = data.ReasonForRejection || "";
-                        statusEntry = {
-                            Status: 'Enquiry Created',
-                            Timestamp: new Date(),
-                            AssignedTo: enquiry.StatusHistory?.at(-1)?.AssignedTo,
-                            AddedBy: userId || 'System',
-                            Details: "Cad Rejected - " + data.ReasonForRejection ?? ""
-                        };
-                    }
-                    enquiry.StatusHistory.push(statusEntry);
                 }
 
                 if (data.Pricing !== undefined && data.Pricing !== null) {
                     updatedCad.Pricing = data.Pricing;
-                    statusEntry = {
-                        Status: enquiry.StatusHistory?.at(-1)?.Status,
-                        Timestamp: new Date(),
-                        AssignedTo: enquiry.StatusHistory?.at(-1)?.AssignedTo,
-                        AddedBy: userId || 'System',
-                        Details: "Cad Pricing Updated"
-                    };
-                    enquiry.StatusHistory.push(statusEntry);
+                    appendStatusEntry(enquiry, {
+                        status: enquiry.StatusHistory?.at(-1)?.Status,
+                        subStatus: deriveCostSubStatus(updatedCad),
+                        addedBy: userId,
+                        details: "Cad Pricing Updated",
+                    });
                 }
 
                 if (data.CadCode !== undefined && data.CadCode !== null) {
                     updatedCad.CadCode = data.CadCode;
                 }
 
-                if (data.ShowToClient !== undefined && data.ShowToClient !== null) {
-                    updatedCad.ShowToClient = data.ShowToClient;
-                    statusEntry = {
-                        Status: 'Design Approval Pending',
-                        Timestamp: new Date(),
-                        AssignedTo: enquiry.StatusHistory?.at(-1)?.AssignedTo,
-                        AddedBy: userId || 'System',
-                        Details: "Approval pending for cad" ?? ""
-                    };
-                    enquiry.StatusHistory.push(statusEntry);
+                if (data.Cost !== undefined && data.Cost !== null && data.Cost !== '') {
+                    const parsedCost = Number(data.Cost);
+                    if (Number.isNaN(parsedCost)) throw new Error('Cost must be a valid number');
+                    updatedCad.Cost = parsedCost;
+                }
+
+                if (data.IsOnlyMetalDesign !== undefined && data.IsOnlyMetalDesign !== null) {
+                    updatedCad.IsOnlyMetalDesign = data.IsOnlyMetalDesign;
+                }
+
+                if (data.SendForApproval === true) {
+                    appendStatusEntry(enquiry, {
+                        status: 'Design Approval Pending',
+                        subStatus: null,
+                        addedBy: userId,
+                        details: "Sent for design approval",
+                    });
                 }
 
                 if (data.Description && data.Id) {
@@ -585,14 +688,12 @@ exports.updateAssetData = async (enquiryId, type, version, data, userId) => {
                     } else {
                         //delete entire version
                         enquiry.Cad.splice(cadIndex, 1);
-                        statusEntry = {
-                            Status: 'CAD',
-                            Timestamp: new Date(),
-                            AssignedTo: enquiry.StatusHistory?.at(-1)?.AssignedTo,
-                            AddedBy: userId || 'System',
-                            Details: "Cad Version Deleted"
-                        };
-                        enquiry.StatusHistory.push(statusEntry);
+                        appendStatusEntry(enquiry, {
+                            status: 'Cad',
+                            subStatus: 'Assigned',
+                            addedBy: userId,
+                            details: "Cad Version Deleted",
+                        });
                     }
                 }
 
@@ -627,7 +728,7 @@ exports.updateAssetData = async (enquiryId, type, version, data, userId) => {
 };
 
 
-async function handleCoralUpload(enquiry, files, version, coralCode, userId) {
+async function handleCoralUpload(enquiry, files, version, coralCode, userId, cost, isOnlyMetalDesign = false) {
 
     const assetVersion = version || 'Version 1';
     let asset = enquiry.Coral.find(a => a.Version === assetVersion);
@@ -639,8 +740,13 @@ async function handleCoralUpload(enquiry, files, version, coralCode, userId) {
             Excel: null,
             Pricing: null,
             CoralCode: coralCode || '',
+            Cost: cost,
+            IsOnlyMetalDesign: isOnlyMetalDesign,
             IsApprovedVersion: false
         };
+    } else {
+        if (cost !== undefined) asset.Cost = cost;
+        if (isOnlyMetalDesign) asset.IsOnlyMetalDesign = true;
     }
 
     
@@ -670,7 +776,6 @@ async function handleCoralUpload(enquiry, files, version, coralCode, userId) {
         };
         tableJson = await handleExcelDataForCoral(excelFile);
     } else if (files.images?.length > 0) {
-        const { extractPricingDataFromImage } = require('./imagePricing.service');
         try {
             tableJson = await extractPricingDataFromImage(files.images[0].buffer, files.images[0].mimetype);
         } catch (err) {
@@ -689,6 +794,10 @@ async function handleCoralUpload(enquiry, files, version, coralCode, userId) {
             Quality: enquiry.Metal.Quality || tableJson.Metal.Quality || null,
         };
         tableJson.Quantity = enquiry.Quantity || 1;
+
+        if (asset.IsOnlyMetalDesign) {
+            tableJson.Stones = [];
+        }
 
         let pricing = await exports.calculatePricing(tableJson, enquiry.ClientId);
 
@@ -732,43 +841,35 @@ async function handleCoralUpload(enquiry, files, version, coralCode, userId) {
     // Push to the Coral array
     enquiry.Coral = enquiry.Coral || [];
 
-    // If asset already exists, update it
     const index = enquiry.Coral.findIndex(a => a.Version === assetVersion);
     if (index !== -1) {
-        enquiry.Coral[index] = asset; // Update the existing asset
+        enquiry.Coral[index] = asset;
     } else {
-        enquiry.Coral.push(asset); // If not found, push the new asset
+        enquiry.Coral.push(asset);
     }
 
-    // Add a status history entry for Coral upload
-    const statusEntry = {
-        Status: 'Quotation',
-        Timestamp: new Date(),
-        AddedBy: userId,
-        Details: `Coral Version ${asset.Version} uploaded`
-    };
+    appendStatusEntry(enquiry, {
+        status: 'Coral',
+        subStatus: deriveCostSubStatus(asset),
+        addedBy: userId,
+        details: `Coral Version ${asset.Version} uploaded`,
+    });
 
-    // Set 'AssignedTo' to the last status history's 'AssignedTo'
-    if (enquiry.StatusHistory.length > 0) {
-        const lastStatusHistory = enquiry.StatusHistory[enquiry.StatusHistory.length - 1]; // Get the last entry
-        statusEntry.AssignedTo = lastStatusHistory.AssignedTo || null;  // If AssignedTo is not set, use null or default value
-    }
+    const updateResult = await repo.updateEnquiry(enquiry._id, enquiry);
 
-    enquiry.StatusHistory.push(statusEntry);
-
-    await repo.updateEnquiry(enquiry._id, enquiry);
-
-    // Fire-and-forget: index newly-uploaded coral images for similarity search.
     if (newCoralUploads.length) {
-        queueMicrotask(() => indexUploadedAssets({
-            enquiryId: enquiry._id, type: 'coral', version: assetVersion, uploads: newCoralUploads,
-        }));
+        const coralStones = tableJson?.Stones || [];
+        const coralMetal = tableJson?.Metal || null;
+        // queueMicrotask(() => indexUploadedAssets({
+        //     enquiryId: enquiry._id, type: 'coral', version: assetVersion, uploads: newCoralUploads,
+        //     stones: coralStones, metal: coralMetal, isOnlyMetalDesign: asset.IsOnlyMetalDesign,
+        // }));
     }
 
     return { _id: enquiry._id };
 }
 
-async function handleCadUpload(enquiry, files, version, cadCode, userId) {
+async function handleCadUpload(enquiry, files, version, cadCode, userId, cost, isFinalVersion = false, isOnlyMetalDesign = false) {
     const assetVersion = version || 'Version 1';
     let asset = enquiry.Cad.find(a => a.Version === assetVersion);
 
@@ -779,8 +880,14 @@ async function handleCadUpload(enquiry, files, version, cadCode, userId) {
             Excel: null,
             Pricing: null,
             CadCode: cadCode || '',
-            IsFinalVersion: false
+            Cost: cost,
+            IsOnlyMetalDesign: isOnlyMetalDesign,
+            IsFinalVersion: isFinalVersion
         };
+    } else {
+        if (cost !== undefined) asset.Cost = cost;
+        if (isFinalVersion) asset.IsFinalVersion = true;
+        if (isOnlyMetalDesign) asset.IsOnlyMetalDesign = true;
     }
 
     const newCadUploads = [];
@@ -828,6 +935,10 @@ async function handleCadUpload(enquiry, files, version, cadCode, userId) {
         };
         tableJson.Quantity = enquiry.Quantity || 1;
 
+        if (asset.IsOnlyMetalDesign) {
+            tableJson.Stones = [];
+        }
+
         let pricing = await exports.calculatePricing(tableJson, enquiry.ClientId);
 
         asset.Pricing = [{
@@ -868,37 +979,29 @@ async function handleCadUpload(enquiry, files, version, cadCode, userId) {
     }
 
     // Push to the Cad array
-    // If asset already exists, update it
     const index = enquiry.Cad.findIndex(a => a.Version === assetVersion);
     if (index !== -1) {
-        enquiry.Cad[index] = asset; // Update the existing asset
+        enquiry.Cad[index] = asset;
     } else {
-        enquiry.Cad.push(asset); // If not found, push the new asset
+        enquiry.Cad.push(asset);
     }
 
-    // Add a status history entry for Cad upload
-    const statusEntry = {
-        Status: 'Quotation',
-        Timestamp: new Date(),
-        AddedBy: userId, // User ID from JWT token
-        Details: `CAD Version ${asset.Version} uploaded`
-    };
+    appendStatusEntry(enquiry, {
+        status: isFinalVersion? 'Order Placement' : 'Cad',
+        subStatus: isFinalVersion ? null : deriveCostSubStatus(asset),
+        addedBy: userId,
+        details: `CAD Version ${isFinalVersion ? 'Final' : asset.Version} uploaded`,
+    });
 
-    // Set 'AssignedTo' to the last status history's 'AssignedTo'
-    if (enquiry.StatusHistory.length > 0) {
-        const lastStatusHistory = enquiry.StatusHistory[enquiry.StatusHistory.length - 1]; // Get the last entry
-        statusEntry.AssignedTo = lastStatusHistory.AssignedTo || null;  // If AssignedTo is not set, use null or default value
-    }
+    const updateResult = await repo.updateEnquiry(enquiry._id, enquiry);
 
-    enquiry.StatusHistory.push(statusEntry);
-
-    await repo.updateEnquiry(enquiry._id, enquiry);
-
-    // Fire-and-forget: index newly-uploaded cad images for similarity search.
     if (newCadUploads.length) {
-        queueMicrotask(() => indexUploadedAssets({
-            enquiryId: enquiry._id, type: 'cad', version: assetVersion, uploads: newCadUploads,
-        }));
+        const cadStones = tableJson?.Stones || [];
+        const cadMetal = tableJson?.Metal || null;
+        // queueMicrotask(() => indexUploadedAssets({
+        //     enquiryId: enquiry._id, type: 'cad', version: assetVersion, uploads: newCadUploads,
+        //     stones: cadStones, metal: cadMetal, isOnlyMetalDesign: asset.IsOnlyMetalDesign,
+        // }));
     }
 
     return { _id: enquiry._id };
@@ -908,34 +1011,24 @@ async function handleReferenceImageUpload(enquiry, files, userId) {
 
     enquiry.ReferenceImages = enquiry.ReferenceImages || [];
 
-
     if (files.images) {
         for (const file of files.images) {
             const key = await uploadToS3(file);
             enquiry.ReferenceImages.push({
                 Id: uuidv4(),
                 Key: key,
-                Description: file.originalname
+                Description: file.description || file.originalname
             });
         }
     }
-
-
     
-    const statusEntry = {
-        Timestamp: new Date(),
-        AddedBy: userId,
-           Details: 'Reference images uploaded'
-    };
-
-    // Set 'AssignedTo' to the last status history's 'AssignedTo'
-    if (enquiry.StatusHistory.length > 0) {
-        const lastStatusHistory = enquiry.StatusHistory[enquiry.StatusHistory.length - 1]; // Get the last entry
-        statusEntry.AssignedTo = lastStatusHistory.AssignedTo || null;  // If AssignedTo is not set, use null or default value
-        statusEntry.Status = lastStatusHistory.Status;
-    }
-
-    enquiry.StatusHistory.push(statusEntry);
+    const lastEntry = enquiry.StatusHistory.at(-1);
+    appendStatusEntry(enquiry, {
+        status: lastEntry?.Status,
+        subStatus: lastEntry?.SubStatus ?? null,
+        addedBy: userId,
+        details: 'Reference images uploaded',
+    });
 
     await repo.updateEnquiry(enquiry._id, enquiry);
     return { _id: enquiry._id };
@@ -957,7 +1050,7 @@ async function handleExcelDataForCoral(file) {
 
     for (const row of jsonData) {
         const Color = row['DIA/COL']?.toString()?.trim();
-        const Shape = row['ST SHAPE']?.toString()?.trim();
+        const Shape = normalizeShape(row['ST SHAPE']?.toString()?.trim());
         const MmSize = row['MM SIZE']?.toString()?.trim();
         const SieveSize = row['SIEVE SIZE']?.toString()?.trim();
         const Weight = parseFloat(row['AVRG WT']) || 0;
@@ -1018,7 +1111,7 @@ async function handleExcelDataForCad(file) {
 
     for (const row of jsonData) {
         const Color = row['DIA/COL']?.toString()?.trim();
-        const Shape = row['ST SHAPE']?.toString()?.trim() || '';
+        const Shape = normalizeShape(row['ST SHAPE']?.toString()?.trim() || '');
         const MmSize = row['MM SIZE']?.toString()?.trim();
         const SieveSize = row['SIEVE SIZE']?.toString()?.trim().match(/[\d.]+(?:-[\d.]+)?/)?.[0] || '';
         const Weight = parseFloat(row['AVRG WT']) || 0;
@@ -1066,19 +1159,22 @@ async function handleExcelDataForCad(file) {
     };
 }
 
-exports.searchEnquiries = async (queryParams) => {
-    return await searchEnquiriesInternal(queryParams);
+exports.searchEnquiries = async (queryParams, userId) => {
+    const scopedParams = await scopeClientFilter(queryParams, userId);
+    return await searchEnquiriesInternal(scopedParams);
 };
 
-exports.getAggregatedCounts = async (queryParams) => {
+exports.getAggregatedCounts = async (queryParams, userId) => {
+    const scopedParams = await scopeClientFilter(queryParams, userId);
+
     // 1. Separate 'groupBy' from the rest of the filters
-    const { groupBy, ...filters } = queryParams;
+    const { groupBy, ...filters } = scopedParams;
 
     // 2. Validate groupBy
     if (!groupBy) {
-        throw new Error("Missing 'groupBy' query parameter. Try 'status' or 'client'.");
+        throw new Error("Missing 'groupBy' query parameter. Try 'status', 'client', or 'buckets'.");
     }
-    const allowedTypes = ['status', 'client'];
+    const allowedTypes = ['status', 'client', 'buckets'];
     if (!allowedTypes.includes(groupBy)) {
         throw new Error("Invalid aggregation type. Must be one of: " + allowedTypes.join(', '));
     }
@@ -1126,15 +1222,28 @@ exports.massActionEnquiries = async ({ enquiryIds, updateType, newStatus, userId
     }
 };
 
-exports.exportEnquiriesPdf = async (queryParams) => {
+exports.exportEnquiriesPdf = async (queryParams, userId) => {
     const startTime = Date.now();
-    console.log(`[PDF Export] Starting PDF export with filters:`, queryParams);
-    
-    const data = await searchEnquiriesInternal(queryParams, { noPaging: true });
-    const queryTime = Date.now() - startTime;
-    console.log(`[PDF Export] Fetched ${data.data?.length || 0} enquiries in ${queryTime}ms`);
-    
-    return reportsService.buildEnquiryPdf(data.data);
+    const scopedQuery = await scopeClientFilter(queryParams || {}, userId);
+    const { reportType = 'enquiries-list', ...userParams } = scopedQuery;
+    const format = reportsService.getFormat(reportType);
+
+    // Format's baseFilters override caller filters for the same key
+    // (e.g. coral-pending always forces status=Coral).
+    const mergedParams = { ...userParams, ...(format.baseFilters || {}) };
+
+    // Apply the format's default sort only when the caller didn't pick one.
+    if (format.defaultSort && !mergedParams.sortBy) {
+        mergedParams.sortBy    = format.defaultSort.field;
+        mergedParams.sortOrder = format.defaultSort.order;
+    }
+
+    console.log(`[PDF Export] reportType=${format.id} filters=`, mergedParams);
+
+    const data = await searchEnquiriesInternal(mergedParams, { noPaging: true });
+    console.log(`[PDF Export] Fetched ${data.data?.length || 0} enquiries in ${Date.now() - startTime}ms`);
+
+    return reportsService.buildReport(format.id, data.data);
 };
 
 async function searchEnquiriesInternal(queryParams, options = {}) {
@@ -1172,7 +1281,6 @@ async function searchEnquiriesInternal(queryParams, options = {}) {
 
     // Call the repository with the clearly separated objects
     const result = await repo.search(searchTerm, filters, sort, pagination);
-    console.log(result);
 
     return {
         ...result,

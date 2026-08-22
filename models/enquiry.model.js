@@ -1,23 +1,18 @@
 const mongoose = require('mongoose');
+const StoneSchema = require('./common/stone.schema');
+const MetalSchema = require('./common/metal.schema');
 
-  const StoneSchema = new mongoose.Schema({
-    Type: String,
-    Color: String,
-    Shape: String,
-    MmSize: String,
-    SieveSize: String,
-    Weight: Number,
-    Pcs: Number,
-    CtWeight: Number,
-    Price: Number,
-    Markup: Number,
-  }, { _id: false });
-
-  const MetalSchema = new mongoose.Schema({
-    Weight: Number,
-    Color: String,
-    Quality: String,
-    Rate: Number
+  const ChecklistSchema = new mongoose.Schema({
+    Engraving: { type: String, default: 'NA' },
+    SizeLength: { type: String, default: 'NA' },
+    SizeRingSize: { type: String, default: 'NA' },
+    DimensionsThickness: { type: String, default: 'NA' },
+    DeliveryDate: { type: String, default: 'NA' },
+    EnamelPaintwork: { type: String, default: 'NA' },
+    RhodiumInstructions: { type: String, default: 'NA' },
+    Components: { type: String, default: 'NA' },
+    Findings: { type: String, default: 'NA' },
+    GeneratedAt: Date,
   }, { _id: false });
 
   const PricingSchema = new mongoose.Schema({
@@ -32,7 +27,10 @@ const mongoose = require('mongoose');
     LossAndLabourDuties: { type: Number, default: 0 },
     Loss: { type: Number, default: 0 },
     Labour: { type: Number, default: 0 },
-    ExtraCharges: { type: Number, default: 0 },
+    ExtraCharges: {
+        Type: { type: String, enum: ['percentage', 'fixed'], default: 'percentage' },
+        Value: { type: Number, default: 0 }
+    },
     DiamondWeight: Number,
     TotalPieces: Number,
     ClientPricingMessage: { type: String, default: null },
@@ -51,6 +49,7 @@ const enquirySchema = new mongoose.Schema({
     ClientId: { type: String, ref: 'Client' },
     StatusHistory: [{
         Status: String,
+        SubStatus: { type: String, default: null },
         Timestamp: Date,
         AssignedTo: String,
         Details: String,
@@ -76,6 +75,18 @@ const enquirySchema = new mongoose.Schema({
     Stamping: String,
     Remarks: String,
     SpecialRemarks: String,
+    Checklist: { type: ChecklistSchema, default: null },
+    Summary: { type: String, default: null },
+    // Internal bookkeeping for the SLA escalation job (not surfaced in search).
+    Escalation: {
+        type: new mongoose.Schema({
+            StatusAnchor: Date,                       // lastStatus.Timestamp this window is tracking
+            Bumps: { type: Number, default: 0 },      // auto priority bumps applied this window
+            LastHandlerAlertOn: String,               // YYYY-MM-DD of last handler escalation
+            LastAdminAlertOn: String,                 // YYYY-MM-DD of last admin escalation
+        }, { _id: false }),
+        default: null,
+    },
     Budget: String,
     ShippingDate: Date,
     ApprovedDate: Date,
@@ -93,27 +104,8 @@ const enquirySchema = new mongoose.Schema({
     Coral: [{
         Version: String,
         CoralCode: String,
-        Images: [{
-            Id: String,
-            Key: String,
-            Description: String
-        }], 
-        Excel: {
-            Id: String,
-            Key: String,
-            Description: String
-        },
-        Pricing: {
-            type: [PricingSchema]
-        },
-        ShowToClient: Boolean,
-        IsApprovedVersion: Boolean,
-        ReasonForRejection: String,
-        CreatedDate: { type: Date, default: Date.now }
-    }],
-    Cad: [{
-        Version: String,
-        CadCode: String,
+        Cost: Number,
+        IsOnlyMetalDesign: Boolean,
         Images: [{
             Id: String,
             Key: String,
@@ -127,8 +119,30 @@ const enquirySchema = new mongoose.Schema({
         Pricing: {
             type: [PricingSchema]
         },
-        ShowToClient: Boolean,
+        IsApprovedVersion: Boolean,
+        ReasonForRejection: String,
+        CreatedDate: { type: Date, default: Date.now }
+    }],
+    Cad: [{
+        Version: String,
+        CadCode: String,
+        Cost: Number,
+        IsOnlyMetalDesign: Boolean,
+        Images: [{
+            Id: String,
+            Key: String,
+            Description: String
+        }],
+        Excel: {
+            Id: String,
+            Key: String,
+            Description: String
+        },
+        Pricing: {
+            type: [PricingSchema]
+        },
         IsFinalVersion: Boolean,
+        IsApprovedVersion: Boolean,
         ReasonForRejection: String,
         CreatedDate: { type: Date, default: Date.now }
     }]

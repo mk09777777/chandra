@@ -38,6 +38,7 @@ const NotificationSchema = new mongoose.Schema(
         'enquiry_updated',
         'new_message',
         'asset_upload',
+        'escalation',
         'system_alert',
         'other',
       ],

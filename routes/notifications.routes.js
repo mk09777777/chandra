@@ -14,6 +14,10 @@ router.get(
   controller.getUnreadCount
 );
 
+// Escalation dashboard — the user's escalation alerts + unread badge
+router.get('/escalations', authenticateToken, controller.getEscalations);
+router.get('/escalations/unread-count', authenticateToken, controller.getEscalationUnreadCount);
+
 // Mark one as read
 router.patch(
   '/:id/read',

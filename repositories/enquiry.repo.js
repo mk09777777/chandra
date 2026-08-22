@@ -1,5 +1,6 @@
 const Enquiry = require('../models/enquiry.model');
 const lodash = require('lodash');
+const { deriveSubStatus } = require('../utils/enquiryStatus');
 
 const MAX_SEARCH_LEN = 100;
 function escapeRegex(s) {
@@ -30,7 +31,7 @@ exports.getEnquiriesByUserId = async (userId) => {
     ]);
 };
 
-const ACTIVE_STATUSES = ['Coral', 'Cad', 'Approved Cad'];
+const ACTIVE_STATUSES = ['Coral', 'Cad'];
 
 exports.countActiveEnquiriesByDesigners = async (designerIds) => {
     const results = await Enquiry.aggregate([
@@ -69,6 +70,58 @@ exports.deleteEnquiry = async (id) => {
 // Bulk delete enquiries by array of ids
 exports.deleteMany = (ids) => {
     return Enquiry.deleteMany({ _id: { $in: ids } });
+};
+
+exports.updateChecklist = async (id, checklist) => {
+  return await Enquiry.findByIdAndUpdate(
+    id,
+    { $set: { Checklist: checklist } },
+    { new: true }
+  );
+};
+
+exports.updateSummary = async (id, summary) => {
+  return await Enquiry.findByIdAndUpdate(
+    id,
+    { $set: { Summary: summary } },
+    { new: true }
+  );
+};
+
+exports.updatePriority = async (id, priority) => {
+  return await Enquiry.findByIdAndUpdate(
+    id,
+    { $set: { Priority: priority } },
+    { new: true }
+  );
+};
+
+exports.updateEscalation = async (id, escalation) => {
+  return await Enquiry.findByIdAndUpdate(
+    id,
+    { $set: { Escalation: escalation } },
+    { new: true }
+  );
+};
+
+// Enquiries whose CURRENT status is Coral/Cad and which entered that status on/before `cutoff`.
+// Returns lean rows with the fields the escalation job needs.
+exports.findStuckInDesignStatuses = async (cutoff) => {
+  return Enquiry.aggregate([
+    { $addFields: { lastStatus: { $arrayElemAt: ['$StatusHistory', -1] } } },
+    { $match: {
+        'lastStatus.Status': { $in: ['Coral', 'Cad'] },
+        'lastStatus.Timestamp': { $lte: cutoff },
+    } },
+    { $project: {
+        Name: 1,
+        Priority: 1,
+        ClientId: 1,
+        Escalation: 1,
+        CurrentStatus: '$lastStatus.Status',
+        StatusAt: '$lastStatus.Timestamp',
+    } },
+  ]);
 };
 
 exports.updateEnquiry = async (id, updatedEnquiry) => {
@@ -139,6 +192,9 @@ exports.search = async (searchTerm, filters, sort, pagination) => {
     if (filters.clientId) {
         matchQuery.ClientId = filters.clientId;
     }
+    if (Array.isArray(filters.clientIds)) {
+        matchQuery.ClientId = { $in: filters.clientIds };
+    }
     // Priority (filterable)
     if (filters.priority) {
         matchQuery.Priority = filters.priority;
@@ -171,6 +227,16 @@ exports.search = async (searchTerm, filters, sort, pagination) => {
         postMatchQuery.CurrentStatus = {
             $in: Array.isArray(filters.status) ? filters.status : [filters.status]
         };
+    }
+    // SubStatus (filterable) — supports single or multi
+    if (filters.subStatus?.length) {
+        postMatchQuery.CurrentSubStatus = {
+            $in: Array.isArray(filters.subStatus) ? filters.subStatus : [filters.subStatus]
+        };
+    }
+    // Unassigned (filterable) — no user on the latest status entry
+    if (filters.unassigned === true || filters.unassigned === 'true') {
+        postMatchQuery.AssignedTo = { $in: [null, undefined, ''] };
     }
     // AssignedTo (filterable)
     if (filters.assignedTo) {
@@ -214,6 +280,7 @@ exports.search = async (searchTerm, filters, sort, pagination) => {
                 firstStatus: { $arrayElemAt: ["$StatusHistory", 0] },
                 lastStatus: { $arrayElemAt: ["$StatusHistory", -1] },
                 finalCad: { $arrayElemAt: [{ $filter: { input: "$Cad", as: "c", cond: { $eq: ["$$c.IsFinalVersion", true] } } }, 0] },
+                approvedCad: { $arrayElemAt: [{ $filter: { input: "$Cad", as: "c", cond: { $eq: ["$$c.IsApprovedVersion", true] } } }, 0] },
                 lastCad: { $arrayElemAt: ["$Cad", -1] },
                 approvedCoral: { $arrayElemAt: [{ $filter: { input: "$Coral", as: "co", cond: { $eq: ["$$co.IsApprovedVersion", true] } } }, 0] },
                 lastCoral: { $arrayElemAt: ["$Coral", -1] }
@@ -225,6 +292,7 @@ exports.search = async (searchTerm, filters, sort, pagination) => {
             $addFields: {
                 // Fields for filtering/sorting
                 CurrentStatus: "$lastStatus.Status",
+                CurrentSubStatus: "$lastStatus.SubStatus",
                 AssignedTo: "$lastStatus.AssignedTo",
                 AssignedDate: "$lastStatus.Timestamp",
                 CreatedDate: "$firstStatus.Timestamp",
@@ -240,6 +308,27 @@ exports.search = async (searchTerm, filters, sort, pagination) => {
                     }
                 },
                 
+                // Latest quotation message: prefer latest CAD version's last pricing message,
+                // fall back to latest Coral version's last pricing message.
+                LatestQuotation: {
+                    $let: {
+                        vars: {
+                            cadMsg:   { $arrayElemAt: ["$lastCad.Pricing.ClientPricingMessage", -1] },
+                            coralMsg: { $arrayElemAt: ["$lastCoral.Pricing.ClientPricingMessage", -1] }
+                        },
+                        in: {
+                            $cond: [
+                                { $and: [
+                                    { $ne: ["$$cadMsg", null] },
+                                    { $ne: ["$$cadMsg", ""] }
+                                ] },
+                                "$$cadMsg",
+                                "$$coralMsg"
+                            ]
+                        }
+                    }
+                },
+
                 // Complex Image Logic
                 ComputedImages: {
                     $cond: {
@@ -279,8 +368,10 @@ exports.search = async (searchTerm, filters, sort, pagination) => {
                     {
                         $project: {
                             Name: 1,
+                            StyleNumber: 1,
                             Category: 1,
                             CurrentStatus: 1,
+                            CurrentSubStatus: 1,
                             ClientId: 1,
                             ReferenceImages: "$ComputedImages",
                             AssignedTo: 1,
@@ -291,7 +382,21 @@ exports.search = async (searchTerm, filters, sort, pagination) => {
                             StoneType: 1,
                             ShippingDate: 1,
                             Remarks: 1,
-                            SpecialRemarks: 1
+                            SpecialRemarks: 1,
+                            Checklist: 1,
+                            Summary: 1,
+                            LatestQuotation: 1,
+                            // High-level version markers (Version + reject reason) so the UI can read workflow progress
+                            "lastCoral.Version": 1,
+                            "lastCoral.ReasonForRejection": 1,
+                            "approvedCoral.Version": 1,
+                            "approvedCoral.ReasonForRejection": 1,
+                            "lastCad.Version": 1,
+                            "lastCad.ReasonForRejection": 1,
+                            "approvedCad.Version": 1,
+                            "approvedCad.ReasonForRejection": 1,
+                            "finalCad.Version": 1,
+                            "finalCad.ReasonForRejection": 1
                             // Note: _id is included by default
                         }
                     }
@@ -312,9 +417,7 @@ exports.search = async (searchTerm, filters, sort, pagination) => {
 const AGGREGATE_CLIENT_STATUSES = [
     "Enquiry Created",
     "Coral",
-    "CAD",
-    "Approved Cad",
-    "Quotation",
+    "Cad",
 ];
 
 
@@ -334,7 +437,10 @@ exports.aggregateBy = async (groupBy, filters = {}) => {
     if (filters.clientId) {
         matchStage.ClientId = filters.clientId;
     }
-    
+    if (Array.isArray(filters.clientIds)) {
+        matchStage.ClientId = { $in: filters.clientIds };
+    }
+
     // Add the initial match stage to the pipeline if it has any filters
     if (Object.keys(matchStage).length > 0) {
         pipeline.push({ $match: matchStage });
@@ -342,7 +448,7 @@ exports.aggregateBy = async (groupBy, filters = {}) => {
 
     // --- 2. Build Grouping & Computed Field Logic ---
     let groupStage = {};
-    let needsAssignedTo = !!filters.assignedTo || (groupBy === 'status' && filters.assignedTo);
+    let needsAssignedTo = !!filters.assignedTo || (groupBy === 'status' && filters.assignedTo) || groupBy === 'buckets';
 
     // We must compute fields *before* we can filter on them
     const fieldsToAdd = {};    
@@ -368,6 +474,35 @@ exports.aggregateBy = async (groupBy, filters = {}) => {
     }
 
     // --- 4. Define Group Stage ---
+    // Special-case: 'buckets' returns the 3 dashboard counts in one $facet pass.
+    if (groupBy === 'buckets') {
+        pipeline.push({
+            $facet: {
+                unassigned: [
+                    { $match: { AssignedTo: { $in: [null, undefined, ''] } } },
+                    { $count: 'count' }
+                ],
+                wip: [
+                    { $match: { CurrentStatus: { $in: ['Coral', 'Cad'] } } },
+                    { $count: 'count' }
+                ],
+                approvalPending: [
+                    { $match: { CurrentStatus: 'Design Approval Pending' } },
+                    { $count: 'count' }
+                ]
+            }
+        });
+        pipeline.push({
+            $project: {
+                unassigned:      { $ifNull: [{ $arrayElemAt: ['$unassigned.count', 0] }, 0] },
+                wip:             { $ifNull: [{ $arrayElemAt: ['$wip.count', 0] }, 0] },
+                approvalPending: { $ifNull: [{ $arrayElemAt: ['$approvalPending.count', 0] }, 0] }
+            }
+        });
+        const bucketResult = await Enquiry.aggregate(pipeline);
+        return bucketResult[0] || { unassigned: 0, wip: 0, approvalPending: 0 };
+    }
+
     switch (groupBy) {
         case 'status':
             groupStage = {
@@ -420,6 +555,7 @@ exports.bulkAppendStatus = async (ids, { Status, AddedBy }) => {
                     $push: {
                         StatusHistory: {
                             Status,
+                            SubStatus: deriveSubStatus(Status, { assignedTo }),
                             AssignedTo: assignedTo,
                             AddedBy,
                             Timestamp: new Date(),

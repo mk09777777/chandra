@@ -52,7 +52,14 @@ const swaggerSpec = {
                         properties: {
                             Loss:                { type: 'number' },
                             Labour:              { type: 'number' },
-                            ExtraCharges:        { type: 'number' },
+                            ExtraCharges: {
+                                type: 'object',
+                                properties: {
+                                    Type:  { type: 'string', enum: ['percentage', 'fixed'] },
+                                    Value: { type: 'number' },
+                                },
+                                description: 'Extra charge applied to the total — either a percentage or a fixed amount.',
+                            },
                             NaturalDuties:       { type: 'number', description: 'Duty % on natural diamond value' },
                             LabDuties:           { type: 'number', description: 'Duty % on lab diamond value (when metal is gold)' },
                             GoldDuties:          { type: 'number', description: 'Duty % on gold metal value' },
@@ -78,6 +85,11 @@ const swaggerSpec = {
                     PricingMessageFormat: {
                         type: 'string',
                         description: 'Template string used to format the client-facing pricing message.',
+                    },
+                    ApplicableStoneTypes: {
+                        type: 'array',
+                        items: { type: 'string' },
+                        description: 'Stone types this client supports (from the StoneTypes codelist). Case-insensitive on input and canonicalized on store; unknown values are kept as sent. Limits the jewelry-estimator price matrix to these types.',
                     },
                 },
             },
@@ -116,6 +128,25 @@ const swaggerSpec = {
                     metal: { type: 'string', example: 'gold' },
                     price: { type: 'number' },
                     date:  { type: 'string', format: 'date-time' },
+                },
+            },
+
+            // ── Enquiry Checklist ───────────────────────────────────────────
+            EnquiryChecklist: {
+                type: 'object',
+                description: 'Auto-generated jewelry manufacturing checklist extracted from Remarks / SpecialRemarks via Gemini. Populated asynchronously after create/update (fire-and-forget). Fields not mentioned by the customer are returned as the string "NA".',
+                nullable: true,
+                properties: {
+                    Engraving:           { type: 'string', example: 'NA' },
+                    SizeLength:          { type: 'string', example: 'NA' },
+                    SizeRingSize:        { type: 'string', example: 'NA' },
+                    DimensionsThickness: { type: 'string', example: 'NA' },
+                    DeliveryDate:        { type: 'string', example: 'NA' },
+                    EnamelPaintwork:     { type: 'string', example: 'NA' },
+                    RhodiumInstructions: { type: 'string', example: 'NA' },
+                    Components:          { type: 'string', example: 'NA' },
+                    Findings:            { type: 'string', example: 'NA', description: 'A single finding from the customer message, e.g. "Chain - Medium", "Nutpost", "Lock - Handmade". "NA" if not mentioned.' },
+                    GeneratedAt:         { type: 'string', format: 'date-time', description: 'When the checklist was last regenerated' },
                 },
             },
 
@@ -174,6 +205,7 @@ const swaggerSpec = {
                                     type: 'object',
                                     properties: {
                                         Status:     { type: 'string' },
+                                        SubStatus:  { type: 'string', nullable: true, description: 'L2 stage within the Coral/Cad phase: Assign Pending, Assigned, Rejected - Redo, Design Submitted, Cost Missing, Quotation Review. Null outside Coral/Cad.' },
                                         Timestamp:  { type: 'string', format: 'date-time' },
                                         AssignedTo: { type: 'string' },
                                         Details:    { type: 'string' },
@@ -207,9 +239,51 @@ const swaggerSpec = {
                             },
                             Coral: { type: 'array', items: { $ref: '#/components/schemas/CoralVersion' } },
                             Cad:   { type: 'array', items: { $ref: '#/components/schemas/CadVersion' } },
+                            Checklist: { $ref: '#/components/schemas/EnquiryChecklist' },
+                            Summary: { type: 'string', nullable: true, description: 'AI-generated designer-facing Markdown summary of the enquiry. Populated asynchronously by Gemini after every POST / PUT — refetch the enquiry to see it.' },
                         },
                     },
                 ],
+            },
+            VersionMarker: {
+                type: 'object',
+                nullable: true,
+                description: 'High-level marker for a Coral/CAD version returned in search — the Version label plus its rejection reason (if any). Absent when that version does not exist.',
+                properties: {
+                    Version:            { type: 'string', example: 'Version 2' },
+                    ReasonForRejection: { type: 'string', nullable: true, description: 'Set when this version was rejected; empty/absent otherwise.' },
+                },
+            },
+            EnquirySearchItem: {
+                type: 'object',
+                description: 'A row returned by GET /api/enquiries/search. This is a PROJECTED, computed shape — not the full Enquiry document. Status/assignment fields are derived from the last StatusHistory entry; ReferenceImages is the resolved display image set; version markers carry only Version.',
+                properties: {
+                    _id:              { type: 'string' },
+                    Name:             { type: 'string' },
+                    StyleNumber:      { type: 'string' },
+                    Category:         { type: 'string' },
+                    CurrentStatus:    { type: 'string', description: 'Status of the last StatusHistory entry' },
+                    CurrentSubStatus: { type: 'string', nullable: true, description: 'SubStatus of the last StatusHistory entry (L2 within Coral/Cad; null otherwise)' },
+                    ClientId:         { type: 'string' },
+                    AssignedTo:       { type: 'string', nullable: true, description: 'Assignee on the last StatusHistory entry' },
+                    AssignedDate:     { type: 'string', format: 'date-time', description: 'Timestamp of the last StatusHistory entry' },
+                    CreatedDate:      { type: 'string', format: 'date-time', description: 'Timestamp of the first StatusHistory entry' },
+                    Priority:         { type: 'string', enum: ['Normal', 'High', 'Super High'] },
+                    Metal:            { type: 'object', properties: { Color: { type: 'string' }, Quality: { type: 'string' } } },
+                    StoneType:        { type: 'string' },
+                    ShippingDate:     { type: 'string', format: 'date-time', nullable: true },
+                    Remarks:          { type: 'string' },
+                    SpecialRemarks:   { type: 'string' },
+                    Checklist:        { $ref: '#/components/schemas/EnquiryChecklist' },
+                    Summary:          { type: 'string', nullable: true },
+                    LatestQuotation:  { type: 'string', nullable: true, description: 'Most recent ClientPricingMessage — latest CAD version, falling back to latest Coral version.' },
+                    ReferenceImages:  { type: 'array', description: 'Resolved display images (finalCad → lastCad → approvedCoral → lastCoral → reference images).', items: { $ref: '#/components/schemas/AssetImage' } },
+                    lastCoral:        { $ref: '#/components/schemas/VersionMarker' },
+                    approvedCoral:    { $ref: '#/components/schemas/VersionMarker' },
+                    lastCad:          { $ref: '#/components/schemas/VersionMarker' },
+                    approvedCad:      { $ref: '#/components/schemas/VersionMarker' },
+                    finalCad:         { $ref: '#/components/schemas/VersionMarker' },
+                },
             },
             AssetImage: {
                 type: 'object',
@@ -244,7 +318,13 @@ const swaggerSpec = {
                     LossAndLabourDuties:  { type: 'number' },
                     Loss:                 { type: 'number' },
                     Labour:               { type: 'number' },
-                    ExtraCharges:         { type: 'number' },
+                    ExtraCharges: {
+                        type: 'object',
+                        properties: {
+                            Type:  { type: 'string', enum: ['percentage', 'fixed'] },
+                            Value: { type: 'number' },
+                        },
+                    },
                     UndercutPrice:        { type: 'number' },
                     DiamondWeight:        { type: 'number' },
                     TotalPieces:          { type: 'number' },
@@ -266,10 +346,11 @@ const swaggerSpec = {
                 properties: {
                     Version:            { type: 'string', example: 'Version 1' },
                     CoralCode:          { type: 'string' },
+                    Cost:               { type: 'number', description: 'Optional fixed cost for this Coral version. Accepted on upload (as form field "cost") and on PUT (as "Cost" in JSON body).' },
+                    IsOnlyMetalDesign:  { type: 'boolean', description: 'When true, this design uses metal only (no stones). Affects pricing calculation.' },
                     Images:             { type: 'array', items: { $ref: '#/components/schemas/AssetImage' } },
                     Excel:              { $ref: '#/components/schemas/AssetExcel' },
                     Pricing:            { type: 'array', items: { $ref: '#/components/schemas/PricingSnapshot' } },
-                    ShowToClient:       { type: 'boolean' },
                     IsApprovedVersion:  { type: 'boolean' },
                     ReasonForRejection: { type: 'string' },
                     CreatedDate:        { type: 'string', format: 'date-time' },
@@ -280,10 +361,11 @@ const swaggerSpec = {
                 properties: {
                     Version:            { type: 'string', example: 'Version 1' },
                     CadCode:            { type: 'string' },
+                    Cost:               { type: 'number', description: 'Optional fixed cost for this CAD version. Accepted on upload (as form field "cost") and on PUT (as "Cost" in JSON body).' },
+                    IsOnlyMetalDesign:  { type: 'boolean', description: 'When true, this design uses metal only (no stones). Affects pricing calculation.' },
                     Images:             { type: 'array', items: { $ref: '#/components/schemas/AssetImage' } },
                     Excel:              { $ref: '#/components/schemas/AssetExcel' },
                     Pricing:            { type: 'array', items: { $ref: '#/components/schemas/PricingSnapshot' } },
-                    ShowToClient:       { type: 'boolean' },
                     IsFinalVersion:     { type: 'boolean' },
                     ReasonForRejection: { type: 'string' },
                     CreatedDate:        { type: 'string', format: 'date-time' },
@@ -323,7 +405,13 @@ const swaggerSpec = {
                     Stones: { type: 'array', items: { $ref: '#/components/schemas/PricingStoneInput' } },
                     Loss:                { type: 'number' },
                     Labour:              { type: 'number' },
-                    ExtraCharges:        { type: 'number' },
+                    ExtraCharges: {
+                        type: 'object',
+                        properties: {
+                            Type:  { type: 'string', enum: ['percentage', 'fixed'] },
+                            Value: { type: 'number' },
+                        },
+                    },
                     UndercutPrice:       { type: 'number' },
                     NaturalDuties:       { type: 'number' },
                     LabDuties:           { type: 'number' },
@@ -368,7 +456,13 @@ const swaggerSpec = {
                         properties: {
                             Loss:                { type: 'number' },
                             Labour:              { type: 'number' },
-                            ExtraCharges:        { type: 'number' },
+                            ExtraCharges: {
+                                type: 'object',
+                                properties: {
+                                    Type:  { type: 'string', enum: ['percentage', 'fixed'] },
+                                    Value: { type: 'number' },
+                                },
+                            },
                             UndercutPrice:       { type: 'number' },
                             NaturalDuties:       { type: 'number' },
                             LabDuties:           { type: 'number' },
@@ -488,10 +582,14 @@ const swaggerSpec = {
             // ── Image Validation ─────────────────────────────────────────────
             ImageValidationResult: {
                 type: 'object',
-                description: 'LLM-generated comparison of a jewelry image against the enquiry description.',
+                description: 'LLM-generated comparison of a jewelry image against the enquiry description AND the enquiry Checklist.',
                 properties: {
-                    summary:    { type: 'string', description: 'Short paragraph summarising mismatches or confirming alignment' },
-                    issues:     { type: 'array', items: { type: 'string' }, description: 'Bullet-point list of specific mismatches or missing elements. Empty array means no issues found.' },
+                    summary:    { type: 'string', description: 'Short paragraph summarising the overall result' },
+                    issues: {
+                        type: 'array',
+                        items: { type: 'string' },
+                        description: 'Combined list of observations. Each entry is a plain string prefixed with one of two headers followed by " - ":\n• "Checklist Verification - <field> \'<customer value>\': <observation>" — one entry per non-NA checklist item (items that cannot be visually verified, like ring size or delivery date, are explicitly called out).\n• "Design Consistency - <observation>" — general design/metal/stone mismatches. Contains "Design Consistency - No issues found" when there are no design issues.',
+                    },
                     confidence: { type: 'string', enum: ['high', 'medium', 'low'], description: 'LLM confidence in the comparison' },
                 },
                 required: ['summary', 'issues', 'confidence'],
@@ -836,10 +934,19 @@ const swaggerSpec = {
             get: {
                 tags: ['Enquiries'],
                 summary: 'Export enquiries as PDF',
+                description: 'Generates a PDF report. The reportType param selects the format — each format has its own column layout and may apply its own base filters on top of the query filters (e.g. coral-pending forces status=Coral). design-approval-pending uses a section-per-client grouped layout.',
                 parameters: [
-                    { in: 'query', name: 'search', schema: { type: 'string' } },
-                    { in: 'query', name: 'status', schema: { type: 'string' } },
+                    { in: 'query', name: 'reportType',
+                      schema: { type: 'string',
+                                enum: ['enquiries-list', 'coral-pending', 'cad-pending', 'design-approval-pending'],
+                                default: 'enquiries-list' },
+                      description: 'Which report format to generate' },
+                    { in: 'query', name: 'search',   schema: { type: 'string' } },
+                    { in: 'query', name: 'status',   schema: { type: 'string' }, description: 'Ignored when the report has its own base status filter' },
                     { in: 'query', name: 'clientId', schema: { type: 'string' } },
+                    { in: 'query', name: 'priority', schema: { type: 'string' } },
+                    { in: 'query', name: 'sortBy',   schema: { type: 'string' }, description: 'Overrides the format default sort' },
+                    { in: 'query', name: 'sortOrder', schema: { type: 'string', enum: ['asc', 'desc'] } },
                 ],
                 responses: {
                     200: { description: 'PDF file', content: { 'application/pdf': {} } },
@@ -854,6 +961,7 @@ const swaggerSpec = {
                     { in: 'query', name: 'search',            schema: { type: 'string' }, description: 'Full-text search across Name, StyleNumber, CoralCode, CadCode, GatiOrderNumber, Stamping, Remarks, SpecialRemarks' },
                     { in: 'query', name: 'id',                schema: { type: 'string' }, description: 'Comma-separated list of enquiry ObjectIds' },
                     { in: 'query', name: 'status',            schema: { oneOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }] }, description: 'Single status or array of statuses (computed from last StatusHistory entry)' },
+                    { in: 'query', name: 'subStatus',         schema: { oneOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }] }, description: 'Single sub-status or array (computed from last StatusHistory entry). E.g. Assign Pending, Assigned, Rejected - Redo, Cost Missing, Quotation Review, Final Cad Upload' },
                     { in: 'query', name: 'clientId',          schema: { type: 'string' } },
                     { in: 'query', name: 'category',          schema: { type: 'string' } },
                     { in: 'query', name: 'priority',          schema: { type: 'string', enum: ['Normal', 'High', 'Super High'] } },
@@ -861,6 +969,8 @@ const swaggerSpec = {
                     { in: 'query', name: 'metalQuality',      schema: { type: 'string' } },
                     { in: 'query', name: 'stoneType',         schema: { type: 'string' } },
                     { in: 'query', name: 'assignedTo',        schema: { type: 'string' }, description: 'User ID currently assigned (last StatusHistory entry)' },
+                    { in: 'query', name: 'unassigned',        schema: { type: 'boolean' }, description: 'When true, returns only enquiries whose last StatusHistory entry has no AssignedTo (null / missing / empty). Overridden if assignedTo is also passed.' },
+                    { in: 'query', name: 'allClients',        schema: { type: 'boolean' }, description: 'Client Handlers only — when true, bypasses client-scoping and returns data across all clients (used when covering for an absent colleague). No effect for other roles.' },
                     { in: 'query', name: 'shippingDateFrom',  schema: { type: 'string', format: 'date-time' } },
                     { in: 'query', name: 'shippingDateTo',    schema: { type: 'string', format: 'date-time' } },
                     { in: 'query', name: 'assignedDateFrom',  schema: { type: 'string', format: 'date-time' } },
@@ -879,7 +989,7 @@ const swaggerSpec = {
                                 schema: {
                                     type: 'object',
                                     properties: {
-                                        data:  { type: 'array', items: { $ref: '#/components/schemas/Enquiry' } },
+                                        data:  { type: 'array', items: { $ref: '#/components/schemas/EnquirySearchItem' } },
                                         total: { type: 'number' },
                                         page:  { type: 'number' },
                                         limit: { type: 'number' },
@@ -895,13 +1005,46 @@ const swaggerSpec = {
             get: {
                 tags: ['Enquiries'],
                 summary: 'Get aggregated enquiry counts',
+                description: 'Returns counts grouped by the chosen dimension.\n\n- `groupBy=status` → `[{ name, count }]` per current status.\n- `groupBy=client` → `[{ name, count }]` per ClientId (restricted to Enquiry Created, Coral, CAD).\n- `groupBy=buckets` → dashboard counts in a single object: `{ unassigned, wip, approvalPending }`. WIP = Coral / Cad; Unassigned = latest status has no AssignedTo; Approval Pending = status "Design Approval Pending".',
                 parameters: [
-                    { in: 'query', name: 'groupBy', required: true, schema: { type: 'string' }, example: 'status' },
-                    { in: 'query', name: 'clientId', schema: { type: 'string' } },
+                    { in: 'query', name: 'groupBy', required: true, schema: { type: 'string', enum: ['status', 'client', 'buckets'] }, example: 'buckets' },
+                    { in: 'query', name: 'clientId', schema: { type: 'string' }, description: 'Optional — scopes all counts to a single client' },
+                    { in: 'query', name: 'assignedTo', schema: { type: 'string' }, description: 'Optional — scopes counts to a single assignee (status/client modes)' },
+                    { in: 'query', name: 'allClients', schema: { type: 'boolean' }, description: 'Client Handlers only — when true, bypasses client-scoping and counts across all clients. No effect for other roles.' },
                 ],
                 responses: {
-                    200: { description: 'Aggregated counts' },
-                    400: { description: 'Missing groupBy parameter' },
+                    200: {
+                        description: 'Aggregated counts',
+                        content: {
+                            'application/json': {
+                                schema: {
+                                    oneOf: [
+                                        {
+                                            type: 'array',
+                                            description: 'Returned for groupBy=status or groupBy=client',
+                                            items: {
+                                                type: 'object',
+                                                properties: {
+                                                    name:  { type: 'string' },
+                                                    count: { type: 'number' },
+                                                },
+                                            },
+                                        },
+                                        {
+                                            type: 'object',
+                                            description: 'Returned for groupBy=buckets',
+                                            properties: {
+                                                unassigned:      { type: 'number' },
+                                                wip:             { type: 'number' },
+                                                approvalPending: { type: 'number' },
+                                            },
+                                        },
+                                    ],
+                                },
+                            },
+                        },
+                    },
+                    400: { description: 'Missing or invalid groupBy parameter' },
                 },
             },
         },
@@ -909,17 +1052,18 @@ const swaggerSpec = {
             post: {
                 tags: ['Enquiries'],
                 summary: 'Calculate pricing for an enquiry',
-                description: 'With clientId, duty rates and stone prices are resolved from Client.Pricing. Without clientId, the caller must supply rates and per-stone Price values in details. Used both on initial Coral/CAD upload (with clientId) and on frontend recalculation after editing the four duty rates (typically without clientId).',
+                description: 'On initial calculation (isRecalculate: false), duty rates and stone prices are resolved from Client.Pricing. On recalculation (isRecalculate: true, used after the user edits duty rates on the frontend), the caller\'s details values are used verbatim and only PricingMessageFormat is read from the client. clientId is always required.',
                 requestBody: {
                     required: true,
                     content: {
                         'application/json': {
                             schema: {
                                 type: 'object',
-                                required: ['details'],
+                                required: ['details', 'clientId'],
                                 properties: {
-                                    details:  { $ref: '#/components/schemas/PricingDetails' },
-                                    clientId: { type: 'string', nullable: true },
+                                    details:       { $ref: '#/components/schemas/PricingDetails' },
+                                    clientId:      { type: 'string' },
+                                    isRecalculate: { type: 'boolean', default: false },
                                 },
                             },
                         },
@@ -984,7 +1128,7 @@ const swaggerSpec = {
             post: {
                 tags: ['Enquiries'],
                 summary: 'Create a new enquiry (multipart, with reference images)',
-                description: 'Send the enquiry payload as a stringified JSON in the `data` field. Attach up to 10 reference files (images, videos, PDFs — anything) under the `referenceImages` field, each up to 50 MB.\n\nAfter creation, an async hook describes/embeds the reference images, auto-assigns a Coral or Cad designer based on user skills, and populates `SimilarDesigns` on the enquiry.',
+                description: 'Send the enquiry payload as a stringified JSON in the `data` field. Attach up to 10 reference files (images, videos, PDFs — anything) under the `referenceImages` field, each up to 50 MB.\n\nAfter creation, an async hook describes/embeds the reference images, auto-assigns a Coral or Cad designer based on user skills, and populates `SimilarDesigns` on the enquiry. Two independent async Gemini hooks also run: one extracts the 9-field jewelry manufacturing `Checklist` from `Remarks` / `SpecialRemarks`, the other generates a designer-facing Markdown `Summary` from the full enquiry. Fetch the enquiry a few seconds later to see both populated.',
                 requestBody: {
                     required: true,
                     content: {
@@ -1029,6 +1173,7 @@ const swaggerSpec = {
             put: {
                 tags: ['Enquiries'],
                 summary: 'Update enquiry by ID',
+                description: 'Updates the enquiry. STATUS/SUB-STATUS RULES: the current state is the last StatusHistory entry; the backend owns sub-status logic. Normal edits should send only changed data fields + `AssignedTo` — never `SubStatus`. On reassignment the backend derives `Assigned`/`Assign Pending`. Sending a `Status` different from the current one is treated as an ADMIN OVERRIDE: if `SubStatus` is provided it must be a valid pair for that Status (else 400); if omitted, the backend derives the assignment-based sub-status from the effective assignee (carried forward when `AssignedTo` isn\'t sent). Allowed pairs — Coral/Cad: Assign Pending, Assigned, Rejected - Redo, Cost Missing, Quotation Review (+ Final Cad Upload for Cad); Enquiry Created / Design Approval Pending / Order Placement: none. Everyday workflow transitions should flow through the asset-upload/approve actions, not this endpoint. Also fires two async Gemini hooks (Checklist + Summary regeneration); the response returns immediately.',
                 parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string' } }],
                 requestBody: {
                     required: true,
@@ -1058,20 +1203,53 @@ const swaggerSpec = {
                     { in: 'query', name: 'version', schema: { type: 'string' } },
                 ],
                 requestBody: {
-                    content: { 'multipart/form-data': { schema: { type: 'object', properties: { file: { type: 'string', format: 'binary' } } } } },
+                    content: {
+                        'multipart/form-data': {
+                            schema: {
+                                type: 'object',
+                                properties: {
+                                    images:  { type: 'array', items: { type: 'string', format: 'binary' }, description: 'Image files for the version' },
+                                    excel:   { type: 'string', format: 'binary', description: 'Optional pricing excel sheet (coral / cad only)' },
+                                    version: { type: 'string', description: 'Version label, e.g. "Version 1"' },
+                                    code:    { type: 'string', description: 'CoralCode or CadCode for the version' },
+                                    cost:    { type: 'number', description: 'Optional fixed cost for this version (coral / cad only). Stored as Number on the Coral/Cad subdocument.' },
+                                },
+                            },
+                        },
+                    },
                 },
                 responses: { 200: { description: 'Upload result' } },
             },
             put: {
                 tags: ['Enquiries'],
-                summary: 'Update asset metadata (approve, reject, etc.)',
+                summary: 'Update asset metadata (approve, reject, cost, etc.)',
                 parameters: [
                     { in: 'path', name: 'id',   required: true, schema: { type: 'string' } },
                     { in: 'path', name: 'type',  required: true, schema: { type: 'string', enum: ['coral', 'cad', 'reference'] } },
                     { in: 'query', name: 'version', schema: { type: 'string' } },
                 ],
                 requestBody: {
-                    content: { 'application/json': { schema: { type: 'object' } } },
+                    content: {
+                        'application/json': {
+                            schema: {
+                                type: 'object',
+                                description: 'Partial update of a Coral / CAD version. Only the keys you send are applied.',
+                                properties: {
+                                    IsApprovedVersion:  { type: 'boolean', description: 'Coral only — true to approve (moves to Cad), false (with ReasonForRejection) to reject (SubStatus → Rejected - Redo)' },
+                                    IsFinalVersion:     { type: 'boolean', description: 'CAD only — true to mark as final (moves to Order Placement), false (with ReasonForRejection) to reject (SubStatus → Rejected - Redo)' },
+                                    ReasonForRejection: { type: 'string' },
+                                    SendForApproval:    { type: 'boolean', description: 'Set true (after the quotation is reviewed) to move the enquiry to "Design Approval Pending". Replaces the retired ShowToClient flag.' },
+                                    CoralCode:          { type: 'string' },
+                                    CadCode:            { type: 'string' },
+                                    Cost:               { type: 'number', description: 'Update the fixed cost for this Coral / CAD version' },
+                                    Pricing:            { type: 'array', items: { $ref: '#/components/schemas/PricingSnapshot' } },
+                                    Id:                 { type: 'string', description: 'Image Id when updating or deleting a single image within the version' },
+                                    Description:        { type: 'string', description: 'New description for the image identified by Id' },
+                                    Delete:             { type: 'boolean', description: 'When true with Id, deletes a single image; when true without Id, deletes the entire version' },
+                                },
+                            },
+                        },
+                    },
                 },
                 responses: { 200: { description: 'Update result' } },
             },
@@ -1148,7 +1326,7 @@ const swaggerSpec = {
                     {
                         in: 'path', name: 'name', required: true,
                         schema: { type: 'string' },
-                        description: 'Codelist type, e.g. Roles, Status, StoneTypes',
+                        description: 'Codelist type, e.g. Roles, Status, StoneTypes, StoneShapes',
                     },
                 ],
                 responses: {
@@ -1186,6 +1364,38 @@ const swaggerSpec = {
             get: {
                 tags: ['Notifications'],
                 summary: 'Get the unread notification count',
+                responses: {
+                    200: {
+                        content: {
+                            'application/json': {
+                                schema: { type: 'object', properties: { count: { type: 'number' } } },
+                            },
+                        },
+                    },
+                },
+            },
+        },
+        '/api/notifications/escalations': {
+            get: {
+                tags: ['Notifications'],
+                summary: 'Get the authenticated user\'s escalation alerts (escalation dashboard)',
+                description: 'Returns the current user\'s notifications of Type "escalation" (newest first) — the SLA-delay alerts raised by the daily escalation job for stuck Coral/Cad enquiries. Same rows also appear in GET /api/notifications.',
+                parameters: [{ in: 'query', name: 'limit', schema: { type: 'integer', default: 50, maximum: 100 } }],
+                responses: {
+                    200: {
+                        content: {
+                            'application/json': {
+                                schema: { type: 'array', items: { $ref: '#/components/schemas/Notification' } },
+                            },
+                        },
+                    },
+                },
+            },
+        },
+        '/api/notifications/escalations/unread-count': {
+            get: {
+                tags: ['Notifications'],
+                summary: 'Get the unread escalation-alert count (badge)',
                 responses: {
                     200: {
                         content: {
@@ -1281,13 +1491,93 @@ const swaggerSpec = {
         },
 
         // ════════════════════════════════════════════════════════════════════
+        // Jewelry Estimator
+        // ════════════════════════════════════════════════════════════════════
+        '/api/jewelry-estimate': {
+            post: {
+                tags: ['Jewelry Estimator'],
+                summary: 'Estimate a ring BOM from images and return a price matrix',
+                description: 'Uploads ring images (top view required; side, 45-degree, and up to 5 additional optional) plus an optional description and ring size to a Vision LLM (Gemini 2.5 Pro), which estimates the bill of materials: stone shapes, carat weights, mm sizes, counts, and a single 10K-gold weight — estimation only (it never decides Natural vs Lab, quality, color, purity, price, or labour). The estimated BOM is then priced deterministically by the existing pricing engine against the given client\'s rate card, across a metal × stone-type matrix. Non-10K metal weights are derived from the 10K estimate by density ratio. Stateless — no image is stored. One LLM call (retried once on malformed output); no per-cell pricing-message LLM calls.',
+                requestBody: {
+                    required: true,
+                    content: {
+                        'multipart/form-data': {
+                            schema: {
+                                type: 'object',
+                                required: ['topView', 'clientId'],
+                                properties: {
+                                    topView:       { type: 'string', format: 'binary', description: 'Top view of the ring (required, max 10 MB)' },
+                                    sideView:      { type: 'string', format: 'binary', description: 'Side view (optional)' },
+                                    fortyFiveView: { type: 'string', format: 'binary', description: '45-degree view (optional)' },
+                                    additional:    { type: 'array', items: { type: 'string', format: 'binary' }, description: 'Up to 5 additional images (optional)' },
+                                    clientId:      { type: 'string', description: 'MongoDB ObjectId of the client whose rate card prices the matrix' },
+                                    description:   { type: 'string', description: 'Optional free-text description sent to the LLM. If a ring size is mentioned here it is used; otherwise size 7 is assumed.' },
+                                },
+                            },
+                        },
+                    },
+                },
+                responses: {
+                    200: {
+                        description: 'AI estimate plus a metal × stone-type price matrix',
+                        content: {
+                            'application/json': {
+                                schema: {
+                                    type: 'object',
+                                    properties: {
+                                        estimate: {
+                                            type: 'object',
+                                            description: 'Raw AI estimate (estimation only)',
+                                            properties: {
+                                                stones: {
+                                                    type: 'array',
+                                                    items: {
+                                                        type: 'object',
+                                                        properties: {
+                                                            shape:       { type: 'string', nullable: true },
+                                                            weightCarat: { type: 'number', nullable: true },
+                                                            sizeMM:      { type: 'number', nullable: true },
+                                                            count:       { type: 'integer' },
+                                                            confidence:  { type: 'number' },
+                                                        },
+                                                    },
+                                                },
+                                                estimated10KWeightGrams: { type: 'number' },
+                                                confidence:              { type: 'number' },
+                                            },
+                                        },
+                                        matrix: {
+                                            type: 'array',
+                                            description: 'One cell per metal × stone-type combination',
+                                            items: {
+                                                type: 'object',
+                                                properties: {
+                                                    metalQuality:     { type: 'string', example: '14K' },
+                                                    stoneType:        { type: 'string', example: 'NaturalRegular' },
+                                                    metalWeightGrams: { type: 'number', description: '10K weight converted to this metal by density ratio' },
+                                                    pricing:          { $ref: '#/components/schemas/PricingResult' },
+                                                },
+                                            },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                    400: { description: 'Missing topView or clientId, or an image exceeds the inline limit' },
+                    500: { description: 'LLM call failed / returned invalid output, or pricing engine error' },
+                },
+            },
+        },
+
+        // ════════════════════════════════════════════════════════════════════
         // Image Validation
         // ════════════════════════════════════════════════════════════════════
         '/api/validate-image': {
             post: {
                 tags: ['Image Validation'],
                 summary: 'Validate a jewelry image against an enquiry description',
-                description: 'Fetches the enquiry from the database (source of truth), builds a description from its fields (Category, Metal, StoneType, Remarks, SpecialRemarks), then calls GPT-4o Vision to compare the uploaded image against that description. Returns structured issues and a confidence level. Stateless — no image is stored.',
+                description: 'Fetches the enquiry from the database (source of truth), builds a description from its fields (Category, Metal, StoneType, Remarks, SpecialRemarks) AND every non-NA item from the enquiry `Checklist`, then calls **Google Gemini 2.5 Flash** to compare the uploaded image against that description PLUS up to 5 of the enquiry\'s reference attachments (images and/or short videos pulled inline from S3) as visual ground truth. The model verifies each checklist item explicitly against the image (or marks it as not visually verifiable) and adds general design-consistency observations on top, cross-referenced with the customer\'s original attachments. Non-image / non-video reference files (PDFs) and any single attachment over ~20 MB are skipped; the count is mentioned in the prompt so the model knows. Returns a flat `issues` array of `Header - point` strings and a confidence level. Stateless — no image is stored.',
                 requestBody: {
                     required: true,
                     content: {

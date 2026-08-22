@@ -6,7 +6,8 @@ const bodyParser = require('body-parser');
 const http = require('http');
 const connectDB = require('./config/db');
 const routes = require('./routes');
-const initSocket = require('./utils/socket'); // 🧠 Import socket logic
+const initSocket = require('./utils/socket');
+const { startEscalationCron } = require('./jobs/escalation.cron');
 const pushService = require('./services/pushNotification.service');
 const { createRolesCodelist } = require('./utils/populateCodelists'); 
 const apiLogger = require('./middleware/apiLogger');
@@ -70,6 +71,9 @@ const startApp = async () => {
 
   // Start WebSocket server
   initSocket(server);
+
+  // Start the daily SLA-escalation cron
+  startEscalationCron();
 
   // Start HTTP server
   const PORT = process.env.PORT || 5000;
